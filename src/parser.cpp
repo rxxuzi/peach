@@ -575,6 +575,8 @@ std::unique_ptr<ProgramNode> Parser::parse() {
                 program->structs.push_back(parseStructDefinition());
             } else if (check(TokenType::UNION)) {
                 program->unions.push_back(parseUnionDefinition());
+            } else if (check(TokenType::ENUM)) {
+                program->enums.push_back(parseEnumDefinition());
             } else if (check(TokenType::IMPL)) {
                 program->implBlocks.push_back(parseImplBlock());
             } else {
@@ -665,4 +667,39 @@ std::unique_ptr<UnionDefNode> Parser::parseUnionDefinition() {
     consume(TokenType::RBRACE, "Expected '}' after union fields");
     
     return std::make_unique<UnionDefNode>(nameToken.value, std::move(fields));
+}
+
+std::unique_ptr<EnumDefNode> Parser::parseEnumDefinition() {
+    consume(TokenType::ENUM, "Expected 'enum'");
+    Token nameToken = consume(TokenType::IDENTIFIER, "Expected enum name");
+    consume(TokenType::LBRACE, "Expected '{' after enum name");
+    
+    std::vector<EnumMember> members = parseEnumMembers();
+    
+    consume(TokenType::RBRACE, "Expected '}' after enum members");
+    
+    return std::make_unique<EnumDefNode>(nameToken.value, std::move(members));
+}
+
+std::vector<EnumMember> Parser::parseEnumMembers() {
+    std::vector<EnumMember> members;
+    
+    while (!check(TokenType::RBRACE) && !isAtEnd()) {
+        Token memberName = consume(TokenType::IDENTIFIER, "Expected enum member name");
+        
+        std::unique_ptr<ExprNode> value = nullptr;
+        if (match(TokenType::ASSIGN)) {
+            value = parseExpression();
+        }
+        
+        members.emplace_back(memberName.value, std::move(value));
+        
+        // Optional comma
+        match(TokenType::COMMA);
+        
+        // Skip optional newlines between members
+        while (match(TokenType::NEWLINE)) {}
+    }
+    
+    return members;
 }

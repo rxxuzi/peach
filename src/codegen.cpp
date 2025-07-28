@@ -45,6 +45,12 @@ void CodeGenerator::generateProgram(ProgramNode* node) {
         output << "\n";
     }
     
+    // Generate enum definitions
+    for (auto& enumDef : node->enums) {
+        generateEnum(enumDef.get());
+        output << "\n";
+    }
+    
     // Generate global declarations
     for (auto& decl : node->globalDeclarations) {
         stmtGen.generate(decl.get());
@@ -167,17 +173,17 @@ void CodeGenerator::analyzeExpression(ExprNode* node) {
         for (auto& arg : methodCall->arguments) {
             analyzeExpression(arg.get());
         }
-    } else if (auto* doubleLit = dynamic_cast<DoubleLiteralNode*>(node)) {
+    } else if (dynamic_cast<DoubleLiteralNode*>(node)) {
         usageTracker.trackType("double");
-    } else if (auto* floatLit = dynamic_cast<FloatLiteralNode*>(node)) {
+    } else if (dynamic_cast<FloatLiteralNode*>(node)) {
         usageTracker.trackType("float");
-    } else if (auto* intLit = dynamic_cast<IntLiteralNode*>(node)) {
+    } else if (dynamic_cast<IntLiteralNode*>(node)) {
         usageTracker.trackType("int");
-    } else if (auto* longLit = dynamic_cast<LongLiteralNode*>(node)) {
+    } else if (dynamic_cast<LongLiteralNode*>(node)) {
         usageTracker.trackType("long");
-    } else if (auto* stringLit = dynamic_cast<StringLiteralNode*>(node)) {
+    } else if (dynamic_cast<StringLiteralNode*>(node)) {
         usageTracker.trackType("string");
-    } else if (auto* boolLit = dynamic_cast<BoolLiteralNode*>(node)) {
+    } else if (dynamic_cast<BoolLiteralNode*>(node)) {
         usageTracker.trackType("bool");
     }
     // Identifiers don't need analysis
@@ -198,6 +204,29 @@ void CodeGenerator::generateUnion(UnionDefNode* node) {
     
     for (const auto& field : node->fields) {
         output << "    " << field.type->toCType() << " " << field.name << ";\n";
+    }
+    
+    output << "};\n";
+}
+
+void CodeGenerator::generateEnum(EnumDefNode* node) {
+    output << "enum " << node->name << " {\n";
+    
+    for (size_t i = 0; i < node->members.size(); i++) {
+        const auto& member = node->members[i];
+        output << "    " << member.name;
+        
+        if (member.value) {
+            output << " = ";
+            // Generate the expression for the enum value
+            ExprGenerator exprGen(output, indentLevel);
+            exprGen.generate(member.value.get());
+        }
+        
+        if (i < node->members.size() - 1) {
+            output << ",";
+        }
+        output << "\n";
     }
     
     output << "};\n";
@@ -260,6 +289,11 @@ void CodeGenerator::buildTypeRegistry(ProgramNode* node) {
         for (const auto& field : unionDef->fields) {
             typeRegistry.addStructField(unionDef->name, field.name, field.type->toCType());
         }
+    }
+    
+    // Register enums (treat them as basic types)
+    for (const auto& enumDef : node->enums) {
+        typeRegistry.registerStruct(enumDef->name); // Register enum as a type
     }
     
     // Register methods from impl blocks

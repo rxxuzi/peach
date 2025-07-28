@@ -16,6 +16,7 @@ std::unordered_map<std::string, TokenType> Lexer::keywords = {
     {"void", TokenType::VOID},
     {"struct", TokenType::STRUCT},
     {"union", TokenType::UNION},
+    {"enum", TokenType::ENUM},
     {"impl", TokenType::IMPL},
     {"int", TokenType::INT_TYPE},
     {"long", TokenType::LONG_TYPE},

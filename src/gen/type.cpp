@@ -82,7 +82,7 @@ std::string TypeGenerator::inferType(ExprNode* expr) {
         // Try to determine the type of the operand
         std::string operandType = inferType(addrOf->operand.get());
         return operandType + "*";
-    } else if (auto* call = dynamic_cast<CallNode*>(expr)) {
+    } else if (dynamic_cast<CallNode*>(expr)) {
         // Function calls - for now assume int, but could be extended
         // to track function return types
         return "int";

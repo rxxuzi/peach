@@ -3,6 +3,8 @@
 #include <memory>
 #include <vector>
 #include <string>
+#include <optional>
+#include <variant>
 
 // Forward declarations
 class ASTNode;
@@ -19,6 +21,17 @@ using TypeNodePtr = std::unique_ptr<TypeNode>;
 class ASTNode {
 public:
     virtual ~ASTNode() = default;
+    
+    // Prevent copying for safety
+    ASTNode(const ASTNode&) = delete;
+    ASTNode& operator=(const ASTNode&) = delete;
+    
+    // Allow moving
+    ASTNode(ASTNode&&) = default;
+    ASTNode& operator=(ASTNode&&) = default;
+    
+protected:
+    ASTNode() = default;
 };
 
 // Type nodes
@@ -284,6 +297,14 @@ struct StructField {
     
     StructField(const std::string& n, TypeNodePtr t) 
         : name(n), type(std::move(t)) {}
+    
+    // Move constructor and assignment
+    StructField(StructField&&) = default;
+    StructField& operator=(StructField&&) = default;
+    
+    // Delete copy constructor and assignment for safety
+    StructField(const StructField&) = delete;
+    StructField& operator=(const StructField&) = delete;
 };
 
 class StructDefNode : public StmtNode {
@@ -302,6 +323,31 @@ public:
     
     UnionDefNode(const std::string& n, std::vector<StructField> f)
         : name(n), fields(std::move(f)) {}
+};
+
+struct EnumMember {
+    std::string name;
+    std::unique_ptr<ExprNode> value; // Optional explicit value
+    
+    EnumMember(const std::string& n, std::unique_ptr<ExprNode> v = nullptr) 
+        : name(n), value(std::move(v)) {}
+    
+    // Move constructor and assignment
+    EnumMember(EnumMember&&) = default;
+    EnumMember& operator=(EnumMember&&) = default;
+    
+    // Delete copy constructor and assignment for safety
+    EnumMember(const EnumMember&) = delete;
+    EnumMember& operator=(const EnumMember&) = delete;
+};
+
+class EnumDefNode : public StmtNode {
+public:
+    std::string name;
+    std::vector<EnumMember> members;
+    
+    EnumDefNode(const std::string& n, std::vector<EnumMember> m)
+        : name(n), members(std::move(m)) {}
 };
 
 // Function and program nodes
@@ -342,5 +388,6 @@ public:
     std::vector<StmtNodePtr> globalDeclarations;
     std::vector<std::unique_ptr<StructDefNode>> structs;
     std::vector<std::unique_ptr<UnionDefNode>> unions;
+    std::vector<std::unique_ptr<EnumDefNode>> enums;
     std::vector<std::unique_ptr<ImplBlockNode>> implBlocks;
 };

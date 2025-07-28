@@ -51,8 +51,10 @@ private:
     // Struct parsing
     std::unique_ptr<StructDefNode> parseStructDefinition();
     std::unique_ptr<UnionDefNode> parseUnionDefinition();
+    std::unique_ptr<EnumDefNode> parseEnumDefinition();
     std::unique_ptr<ImplBlockNode> parseImplBlock();
     std::vector<StructField> parseStructFields();
+    std::vector<EnumMember> parseEnumMembers();
     
     // Helper for parsing function calls
     std::vector<ExprNodePtr> parseArguments();

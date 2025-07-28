@@ -15,18 +15,12 @@ void printUsage(const std::string& programName) {
     std::cout << "  -c, --compile       Compile to object file only (don't link)\n";
     std::cout << "  -E, --preprocess    Run preprocessor only (not implemented yet)\n";
     std::cout << "  -v, --verbose       Enable verbose output\n";
-    std::cout << "\nExamples:\n";
-    std::cout << "  " << programName << " hello.peach              # Compile to executable (a.out)\n";
-    std::cout << "  " << programName << " -o hello hello.peach      # Compile to executable named 'hello'\n";
-    std::cout << "  " << programName << " -s hello.peach            # Generate hello.c\n";
-    std::cout << "  " << programName << " -c hello.peach            # Generate hello.o\n";
 }
 
 int main(int argc, char* argv[]) {
     std::string outputName;
     bool generateSourceOnly = false;
     bool compileToObjectOnly = false;
-    bool preprocessOnly = false;
     bool verbose = false;
     
     // Parse command line options
@@ -57,7 +51,6 @@ int main(int argc, char* argv[]) {
                 compileToObjectOnly = true;
                 break;
             case 'E':
-                preprocessOnly = true;
                 std::cerr << "Error: Preprocessing (-E) is not implemented yet\n";
                 return 1;
             case 'v':
