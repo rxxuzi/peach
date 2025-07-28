@@ -3,8 +3,12 @@
 #include <vector>
 #include <string>
 #include <cstdlib>
+#include <chrono>
+#include <iomanip>
 #include <getopt.h>
 #include "compiler.h"
+#include "security/type_safety.h"
+#include "security/memory_safety.h"
 
 void printUsage(const std::string& programName) {
     std::cout << "Usage: " << programName << " [options] <source.peach> [source2.peach ...]\n";
@@ -25,12 +29,12 @@ int main(int argc, char* argv[]) {
     
     // Parse command line options
     static struct option long_options[] = {
-        {"help",       no_argument,       0, 'h'},
-        {"output",     required_argument, 0, 'o'},
-        {"source",     no_argument,       0, 's'},
-        {"compile",    no_argument,       0, 'c'},
-        {"preprocess", no_argument,       0, 'E'},
-        {"verbose",    no_argument,       0, 'v'},
+        {"help",         no_argument,       0, 'h'},
+        {"output",       required_argument, 0, 'o'},
+        {"source",       no_argument,       0, 's'},
+        {"compile",      no_argument,       0, 'c'},
+        {"preprocess",   no_argument,       0, 'E'},
+        {"verbose",      no_argument,       0, 'v'},
         {0, 0, 0, 0}
     };
     
@@ -81,6 +85,8 @@ int main(int argc, char* argv[]) {
     }
     
     try {
+        auto startTime = std::chrono::high_resolution_clock::now();
+        
         PeachCompiler compiler;
         compiler.setVerbose(verbose);
         
@@ -139,11 +145,19 @@ int main(int argc, char* argv[]) {
             }
             compiler.generateExecutable(outputName);
             
+            if (verbose) {
+                auto endTime = std::chrono::high_resolution_clock::now();
+                auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(endTime - startTime);
+                std::cout << "Compilation completed in " << duration.count() << "ms\n";
+            }
             std::cout << "Compilation successful! Output: " << outputName << "\n";
         }
         
     } catch (const std::exception& e) {
         std::cerr << "Compilation error: " << e.what() << "\n";
+        return 1;
+    } catch (...) {
+        std::cerr << "Unknown error during compilation\n";
         return 1;
     }
     

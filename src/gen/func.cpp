@@ -39,7 +39,6 @@ void FuncGenerator::generateParameters(const std::vector<std::pair<std::string, 
             // Convert array parameters to pointer parameters for C compatibility
             if (paramType.find("[") != std::string::npos) {
                 // Extract element type from array type like "[5]int" -> "int*"
-                size_t bracketPos = paramType.find("[");
                 size_t closeBracketPos = paramType.find("]");
                 if (closeBracketPos != std::string::npos) {
                     std::string elementType = paramType.substr(closeBracketPos + 1);
@@ -66,7 +65,7 @@ void FuncGenerator::generateBody(FunctionNode* node) {
     StmtGenerator stmtGen(output, indentLevel, typeRegistry);
     stmtGen.setCurrentScope(&functionScope);
     
-    if (auto* block = dynamic_cast<BlockNode*>(node->body.get())) {
+    if (dynamic_cast<BlockNode*>(node->body.get())) {
         stmtGen.generate(node->body.get());
     } else if (auto* exprStmt = dynamic_cast<ExprStmtNode*>(node->body.get())) {
         // Single expression body - wrap in block with return
