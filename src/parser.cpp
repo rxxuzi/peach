@@ -110,6 +110,10 @@ TypeNodePtr Parser::parseType() {
         else if (previous().type == TokenType::VOID) typeName = "void";
         
         baseType = std::make_unique<BasicTypeNode>(typeName);
+    } else if (match(TokenType::IDENTIFIER)) {
+        // This could be a struct type
+        std::string typeName = previous().value;
+        baseType = std::make_unique<StructTypeNode>(typeName);
     } else {
         throw std::runtime_error("Expected type");
     }
@@ -259,6 +263,18 @@ ExprNodePtr Parser::parsePostfix() {
             ExprNodePtr index = parseExpression();
             consume(TokenType::RBRACKET, "Expected ']' after array index");
             expr = std::make_unique<IndexNode>(std::move(expr), std::move(index));
+        } else if (match(TokenType::DOT)) {
+            // Field access or method call
+            Token fieldName = consume(TokenType::IDENTIFIER, "Expected field or method name after '.'");
+            
+            if (match(TokenType::LPAREN)) {
+                // Method call
+                auto args = parseArguments();
+                expr = std::make_unique<MethodCallNode>(std::move(expr), fieldName.value, std::move(args));
+            } else {
+                // Field access
+                expr = std::make_unique<FieldAccessNode>(std::move(expr), fieldName.value);
+            }
         } else {
             break;
         }
@@ -310,7 +326,35 @@ ExprNodePtr Parser::parsePrimary() {
     }
     
     if (match(TokenType::IDENTIFIER)) {
-        return std::make_unique<IdentifierNode>(previous().value);
+        std::string identifier = previous().value;
+        
+        // Check for struct initialization: StructName { ... }
+        if (check(TokenType::LBRACE)) {
+            advance(); // consume '{'
+            
+            std::vector<std::pair<std::string, ExprNodePtr>> fields;
+            
+            if (!check(TokenType::RBRACE)) {
+                do {
+                    // Parse field initialization: .fieldName = value or just value
+                    if (match(TokenType::DOT)) {
+                        Token fieldName = consume(TokenType::IDENTIFIER, "Expected field name after '.'");
+                        consume(TokenType::ASSIGN, "Expected '=' after field name");
+                        ExprNodePtr value = parseExpression();
+                        fields.emplace_back(fieldName.value, std::move(value));
+                    } else {
+                        // Positional initialization (without field names)
+                        ExprNodePtr value = parseExpression();
+                        fields.emplace_back("", std::move(value)); // Empty field name for positional
+                    }
+                } while (match(TokenType::COMMA));
+            }
+            
+            consume(TokenType::RBRACE, "Expected '}' after struct fields");
+            return std::make_unique<StructInitNode>(identifier, std::move(fields));
+        }
+        
+        return std::make_unique<IdentifierNode>(identifier);
     }
     
     if (match(TokenType::LBRACE)) {
@@ -516,8 +560,12 @@ std::unique_ptr<ProgramNode> Parser::parse() {
                 program->functions.push_back(parseFunction());
             } else if (check(TokenType::VAL) || check(TokenType::VAR)) {
                 program->globalDeclarations.push_back(parseVarDeclaration());
+            } else if (check(TokenType::STRUCT)) {
+                program->structs.push_back(parseStructDefinition());
+            } else if (check(TokenType::IMPL)) {
+                program->implBlocks.push_back(parseImplBlock());
             } else {
-                throw std::runtime_error("Expected function or global declaration");
+                throw std::runtime_error("Expected function, global declaration, struct, or impl block");
             }
         } catch (const std::exception& e) {
             // For now, just rethrow
@@ -526,4 +574,70 @@ std::unique_ptr<ProgramNode> Parser::parse() {
     }
     
     return program;
+}
+
+std::unique_ptr<StructDefNode> Parser::parseStructDefinition() {
+    consume(TokenType::STRUCT, "Expected 'struct'");
+    Token nameToken = consume(TokenType::IDENTIFIER, "Expected struct name");
+    consume(TokenType::LBRACE, "Expected '{' after struct name");
+    
+    std::vector<StructField> fields = parseStructFields();
+    
+    consume(TokenType::RBRACE, "Expected '}' after struct fields");
+    
+    return std::make_unique<StructDefNode>(nameToken.value, std::move(fields));
+}
+
+std::vector<StructField> Parser::parseStructFields() {
+    std::vector<StructField> fields;
+    
+    while (!check(TokenType::RBRACE) && !isAtEnd()) {
+        Token fieldName = consume(TokenType::IDENTIFIER, "Expected field name");
+        consume(TokenType::COLON, "Expected ':' after field name");
+        TypeNodePtr fieldType = parseType();
+        
+        fields.emplace_back(fieldName.value, std::move(fieldType));
+        
+        // Skip optional newlines between fields
+        while (match(TokenType::NEWLINE)) {}
+    }
+    
+    return fields;
+}
+
+std::unique_ptr<ImplBlockNode> Parser::parseImplBlock() {
+    consume(TokenType::IMPL, "Expected 'impl'");
+    
+    ReceiverType receiverType = ReceiverType::Value;
+    std::string structName;
+    
+    // Check for receiver type prefix
+    if (match(TokenType::STAR)) {
+        receiverType = ReceiverType::Pointer;
+    } else if (match(TokenType::AMPERSAND)) {
+        receiverType = ReceiverType::Reference;
+    }
+    
+    Token nameToken = consume(TokenType::IDENTIFIER, "Expected struct name");
+    structName = nameToken.value;
+    
+    consume(TokenType::LBRACE, "Expected '{' after impl declaration");
+    
+    std::vector<std::unique_ptr<FunctionNode>> methods;
+    
+    while (!check(TokenType::RBRACE) && !isAtEnd()) {
+        if (check(TokenType::DEF)) {
+            methods.push_back(parseFunction());
+        } else {
+            // Skip newlines
+            if (match(TokenType::NEWLINE)) {
+                continue;
+            }
+            throw std::runtime_error("Expected method definition in impl block");
+        }
+    }
+    
+    consume(TokenType::RBRACE, "Expected '}' after impl block");
+    
+    return std::make_unique<ImplBlockNode>(receiverType, structName, std::move(methods));
 }

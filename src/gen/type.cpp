@@ -86,10 +86,70 @@ std::string TypeGenerator::inferType(ExprNode* expr) {
         // Function calls - for now assume int, but could be extended
         // to track function return types
         return "int";
+    } else if (auto* methodCall = dynamic_cast<MethodCallNode*>(expr)) {
+        // Method calls - look up the return type from type registry
+        if (typeRegistry) {
+            auto* ident = dynamic_cast<IdentifierNode*>(methodCall->receiver.get());
+            if (ident) {
+                std::string varType = "";
+                
+                // Try to get variable type from symbol table first
+                if (symbolTable && symbolTable->hasSymbol(ident->name)) {
+                    varType = symbolTable->getSymbolType(ident->name);
+                } else {
+                    varType = typeRegistry->getVariableType(ident->name);
+                }
+                
+                // Extract struct name from type
+                if (varType.find("struct ") == 0) {
+                    std::string structName = varType.substr(7);
+                    std::string returnType = typeRegistry->getMethodReturnType(structName, methodCall->methodName);
+                    if (!returnType.empty()) {
+                        return returnType;
+                    }
+                }
+            }
+        }
+        
+        // Fallback - this should be an error in a complete implementation
+        return "int";
+    } else if (auto* structInit = dynamic_cast<StructInitNode*>(expr)) {
+        // Struct initialization - return the struct type
+        return "struct " + structInit->structName;
     } else if (auto* ident = dynamic_cast<IdentifierNode*>(expr)) {
         // Identifiers - use symbol table for type lookup
         if (symbolTable && symbolTable->hasSymbol(ident->name)) {
             return symbolTable->getSymbolType(ident->name);
+        } else if (typeRegistry) {
+            std::string varType = typeRegistry->getVariableType(ident->name);
+            if (!varType.empty()) {
+                return varType;
+            }
+        }
+        return "int"; // Fallback
+    } else if (auto* fieldAccess = dynamic_cast<FieldAccessNode*>(expr)) {
+        // Field access - determine field type
+        if (typeRegistry) {
+            auto* ident = dynamic_cast<IdentifierNode*>(fieldAccess->object.get());
+            if (ident) {
+                std::string varType = "";
+                
+                // Get variable type
+                if (symbolTable && symbolTable->hasSymbol(ident->name)) {
+                    varType = symbolTable->getSymbolType(ident->name);
+                } else {
+                    varType = typeRegistry->getVariableType(ident->name);
+                }
+                
+                // Extract struct name and look up field type
+                if (varType.find("struct ") == 0) {
+                    std::string structName = varType.substr(7);
+                    std::string fieldType = typeRegistry->getFieldType(structName, fieldAccess->fieldName);
+                    if (!fieldType.empty()) {
+                        return fieldType;
+                    }
+                }
+            }
         }
         return "int"; // Fallback
     } else {

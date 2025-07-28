@@ -43,6 +43,18 @@ void FuncGenerator::generateParameters(const std::vector<std::pair<std::string, 
 }
 
 void FuncGenerator::generateBody(FunctionNode* node) {
+    // Create symbol table for function scope
+    SymbolTable functionScope;
+    
+    // Add parameters to symbol table
+    for (const auto& param : node->parameters) {
+        functionScope.addSymbol(param.first, param.second->toCType());
+    }
+    
+    // Create statement generator with function scope
+    StmtGenerator stmtGen(output, indentLevel, typeRegistry);
+    stmtGen.setCurrentScope(&functionScope);
+    
     if (auto* block = dynamic_cast<BlockNode*>(node->body.get())) {
         stmtGen.generate(node->body.get());
     } else if (auto* exprStmt = dynamic_cast<ExprStmtNode*>(node->body.get())) {

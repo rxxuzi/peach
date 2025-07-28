@@ -20,3 +20,7 @@ std::string ArrayTypeNode::toCType() const {
     // The array size is handled differently in C declarations
     return elementType->toCType();
 }
+
+std::string StructTypeNode::toCType() const {
+    return "struct " + structName;
+}

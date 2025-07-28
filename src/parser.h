@@ -48,6 +48,11 @@ private:
     // Function parsing
     std::unique_ptr<FunctionNode> parseFunction();
     
+    // Struct parsing
+    std::unique_ptr<StructDefNode> parseStructDefinition();
+    std::unique_ptr<ImplBlockNode> parseImplBlock();
+    std::vector<StructField> parseStructFields();
+    
     // Helper for parsing function calls
     std::vector<ExprNodePtr> parseArguments();
     

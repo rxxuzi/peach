@@ -2,17 +2,19 @@
 #include "base.h"
 #include "symbol_table.h"
 #include "../ast.h"
+#include "../type_registry.h"
 
 class ExprGenerator : public CodeGenBase {
 private:
     SymbolTable* symbolTable;
+    TypeRegistry* typeRegistry;
     
 public:
     ExprGenerator(std::stringstream& out, int& indent) 
-        : CodeGenBase(out, indent), symbolTable(nullptr) {}
+        : CodeGenBase(out, indent), symbolTable(nullptr), typeRegistry(nullptr) {}
     
-    ExprGenerator(std::stringstream& out, int& indent, SymbolTable* symbols) 
-        : CodeGenBase(out, indent), symbolTable(symbols) {}
+    ExprGenerator(std::stringstream& out, int& indent, SymbolTable* symbols, TypeRegistry* types = nullptr) 
+        : CodeGenBase(out, indent), symbolTable(symbols), typeRegistry(types) {}
     
     void generate(ExprNode* node);
     
@@ -31,4 +33,7 @@ private:
     void generateCall(CallNode* node);
     void generateAddressOf(AddressOfNode* node);
     void generateDereference(DereferenceNode* node);
+    void generateFieldAccess(FieldAccessNode* node);
+    void generateStructInit(StructInitNode* node);
+    void generateMethodCall(MethodCallNode* node);
 };

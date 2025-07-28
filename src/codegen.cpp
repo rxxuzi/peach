@@ -10,7 +10,10 @@ std::string CodeGenerator::generate(std::unique_ptr<ProgramNode>& ast) {
     output.str("");
     output.clear();
     
-    // First pass: analyze usage
+    // First pass: build type registry
+    buildTypeRegistry(ast.get());
+    
+    // Second pass: analyze usage
     analyzeUsage(ast.get());
     
     // Generate built-in functions and includes
@@ -24,7 +27,17 @@ std::string CodeGenerator::generate(std::unique_ptr<ProgramNode>& ast) {
 }
 
 void CodeGenerator::generateProgram(ProgramNode* node) {
-    StmtGenerator stmtGen(output, indentLevel);
+    // Create generators with type registry support
+    SymbolTable globalSymbols;
+    TypeGenerator typeGen(output, indentLevel, &globalSymbols, &typeRegistry);
+    StmtGenerator stmtGen(output, indentLevel, &typeRegistry);
+    ExprGenerator exprGen(output, indentLevel, &globalSymbols, &typeRegistry);
+    
+    // Generate struct definitions first
+    for (auto& structDef : node->structs) {
+        generateStruct(structDef.get());
+        output << "\n";
+    }
     
     // Generate global declarations
     for (auto& decl : node->globalDeclarations) {
@@ -36,8 +49,15 @@ void CodeGenerator::generateProgram(ProgramNode* node) {
         output << "\n";
     }
     
-    // Generate functions
-    FuncGenerator funcGen(output, indentLevel);
+    // Generate methods from impl blocks first (before functions that might use them)
+    FuncGenerator funcGen(output, indentLevel, &typeRegistry);
+    
+    for (auto& implBlock : node->implBlocks) {
+        generateImplBlock(implBlock.get(), funcGen);
+        output << "\n";
+    }
+    
+    // Generate regular functions
     for (auto& func : node->functions) {
         funcGen.generate(func.get());
         output << "\n";
@@ -71,6 +91,16 @@ void CodeGenerator::analyzeStatement(StmtNode* node) {
     } else if (auto* varDecl = dynamic_cast<VarDeclNode*>(node)) {
         if (varDecl->initializer) {
             analyzeExpression(varDecl->initializer.get());
+            
+            // Register variable type in type registry
+            if (varDecl->type) {
+                typeRegistry.registerVariable(varDecl->name, varDecl->type->toCType());
+            } else {
+                // Infer type from initializer
+                TypeGenerator typeGen(output, indentLevel, nullptr, &typeRegistry);
+                std::string inferredType = typeGen.inferType(varDecl->initializer.get());
+                typeRegistry.registerVariable(varDecl->name, inferredType);
+            }
         }
         if (varDecl->type) {
             // Track type usage
@@ -119,6 +149,107 @@ void CodeGenerator::analyzeExpression(ExprNode* node) {
         for (auto& elem : arrayLit->elements) {
             analyzeExpression(elem.get());
         }
+    } else if (auto* fieldAccess = dynamic_cast<FieldAccessNode*>(node)) {
+        analyzeExpression(fieldAccess->object.get());
+        // Track that we're accessing fields (might need struct types)
+    } else if (auto* structInit = dynamic_cast<StructInitNode*>(node)) {
+        for (const auto& field : structInit->fields) {
+            analyzeExpression(field.second.get());
+        }
+    } else if (auto* methodCall = dynamic_cast<MethodCallNode*>(node)) {
+        analyzeExpression(methodCall->receiver.get());
+        for (auto& arg : methodCall->arguments) {
+            analyzeExpression(arg.get());
+        }
+    } else if (auto* doubleLit = dynamic_cast<DoubleLiteralNode*>(node)) {
+        usageTracker.trackType("double");
+    } else if (auto* floatLit = dynamic_cast<FloatLiteralNode*>(node)) {
+        usageTracker.trackType("float");
+    } else if (auto* intLit = dynamic_cast<IntLiteralNode*>(node)) {
+        usageTracker.trackType("int");
+    } else if (auto* longLit = dynamic_cast<LongLiteralNode*>(node)) {
+        usageTracker.trackType("long");
+    } else if (auto* stringLit = dynamic_cast<StringLiteralNode*>(node)) {
+        usageTracker.trackType("string");
+    } else if (auto* boolLit = dynamic_cast<BoolLiteralNode*>(node)) {
+        usageTracker.trackType("bool");
     }
-    // Literals and identifiers don't need analysis
+    // Identifiers don't need analysis
+}
+
+void CodeGenerator::generateStruct(StructDefNode* node) {
+    output << "struct " << node->name << " {\n";
+    
+    for (const auto& field : node->fields) {
+        output << "    " << field.type->toCType() << " " << field.name << ";\n";
+    }
+    
+    output << "};\n";
+}
+
+void CodeGenerator::generateImplBlock(ImplBlockNode* node, FuncGenerator& funcGen) {
+    // Generate methods with special naming convention and receiver parameter
+    for (auto& method : node->methods) {
+        // Create method name: __StructName_methodName format
+        std::string methodName = "__" + node->structName + "_" + method->name;
+        
+        // Add suffix for pointer receiver
+        if (node->receiverType == ReceiverType::Pointer) {
+            methodName += "_p";
+        }
+        
+        // Generate function signature
+        std::string returnType = method->returnType ? method->returnType->toCType() : "void";
+        output << returnType << " " << methodName << "(";
+        
+        // Add receiver parameter first
+        if (node->receiverType == ReceiverType::Value) {
+            output << "struct " << node->structName << " self";
+        } else if (node->receiverType == ReceiverType::Pointer) {
+            output << "struct " << node->structName << "* self";
+        } else { // Reference
+            output << "struct " << node->structName << "* self";
+        }
+        
+        // Add other parameters
+        for (const auto& param : method->parameters) {
+            output << ", " << param.second->toCType() << " " << param.first;
+        }
+        
+        output << ") ";
+        
+        // Generate function body using the existing function generator
+        funcGen.generateBody(method.get());
+        output << "\n";
+    }
+}
+
+void CodeGenerator::buildTypeRegistry(ProgramNode* node) {
+    // Clear previous type information
+    typeRegistry.clear();
+    
+    // Register structs and their fields
+    for (const auto& structDef : node->structs) {
+        typeRegistry.registerStruct(structDef->name);
+        
+        for (const auto& field : structDef->fields) {
+            typeRegistry.addStructField(structDef->name, field.name, field.type->toCType());
+        }
+    }
+    
+    // Register methods from impl blocks
+    for (const auto& implBlock : node->implBlocks) {
+        for (const auto& method : implBlock->methods) {
+            std::vector<std::string> paramTypes;
+            for (const auto& param : method->parameters) {
+                paramTypes.push_back(param.second->toCType());
+            }
+            
+            std::string returnType = method->returnType ? method->returnType->toCType() : "void";
+            MethodInfo methodInfo(method->name, returnType, paramTypes, 
+                                  implBlock->receiverType == ReceiverType::Pointer);
+            
+            typeRegistry.addStructMethod(implBlock->structName, methodInfo);
+        }
+    }
 }

@@ -61,18 +61,16 @@ void BuiltinGenerator::generatePrintFunctions() {
     // Generate specific print functions for each type
     const auto& types = usage.getUsedTypes();
     
-    if (types.find("int") != types.end() || types.empty()) {
-        emitLine("static void print_int(int x) { printf(\"%d\\n\", x); }");
-    }
+    // Always generate print_int as it's used as default
+    emitLine("static void print_int(int x) { printf(\"%d\\n\", x); }");
     if (types.find("long") != types.end()) {
         emitLine("static void print_long(long x) { printf(\"%ld\\n\", x); }");
     }
     if (types.find("float") != types.end()) {
         emitLine("static void print_float(float x) { printf(\"%.6f\\n\", x); }");
     }
-    if (types.find("double") != types.end()) {
-        emitLine("static void print_double(double x) { printf(\"%.6f\\n\", x); }");
-    }
+    // Always generate print_double for struct fields
+    emitLine("static void print_double(double x) { printf(\"%.6f\\n\", x); }");
     if (types.find("string") != types.end() || types.empty()) {
         emitLine("static void print_string(const char* x) { printf(\"%s\\n\", x); }");
     }
@@ -88,18 +86,16 @@ void BuiltinGenerator::generatePrintFunctions() {
     const auto& allTypes = usage.getUsedTypes();
     std::vector<std::string> entries;
     
-    if (allTypes.find("int") != allTypes.end() || allTypes.empty()) {
-        entries.push_back("    int: print_int");
-    }
+    // Always include int in the macro
+    entries.push_back("    int: print_int");
     if (allTypes.find("long") != allTypes.end()) {
         entries.push_back("    long: print_long");
     }
     if (allTypes.find("float") != allTypes.end()) {
         entries.push_back("    float: print_float");
     }
-    if (allTypes.find("double") != allTypes.end()) {
-        entries.push_back("    double: print_double");
-    }
+    // Always include double in the macro
+    entries.push_back("    double: print_double");
     if (allTypes.find("string") != allTypes.end() || allTypes.empty()) {
         entries.push_back("    char*: print_string");
         entries.push_back("    const char*: print_string");

@@ -2,14 +2,18 @@
 #include "base.h"
 #include "expr.h"
 #include "../ast.h"
+#include "../type_registry.h"
 
 class StmtGenerator : public CodeGenBase {
 private:
-    ExprGenerator exprGen;
+    TypeRegistry* typeRegistry;
+    SymbolTable* currentScope;
     
 public:
-    StmtGenerator(std::stringstream& out, int& indent) 
-        : CodeGenBase(out, indent), exprGen(out, indent) {}
+    StmtGenerator(std::stringstream& out, int& indent, TypeRegistry* types = nullptr) 
+        : CodeGenBase(out, indent), typeRegistry(types), currentScope(nullptr) {}
+    
+    void setCurrentScope(SymbolTable* scope) { currentScope = scope; }
     
     void generate(StmtNode* node);
     

@@ -3,7 +3,7 @@
 
 enum class TokenType {
     // Keywords
-    VAL, VAR, DEF, IF, ELSE, WHILE, FOR, RETURN, TRUE, FALSE, VOID,
+    VAL, VAR, DEF, IF, ELSE, WHILE, FOR, RETURN, TRUE, FALSE, VOID, STRUCT, IMPL,
     
     // Types
     INT_TYPE, LONG_TYPE, FLOAT_TYPE, DOUBLE_TYPE, BOOL_TYPE, STRING_TYPE,
@@ -23,7 +23,7 @@ enum class TokenType {
     
     // Delimiters
     LPAREN, RPAREN, LBRACE, RBRACE, LBRACKET, RBRACKET,
-    SEMICOLON, COMMA, COLON, ARROW,
+    SEMICOLON, COMMA, COLON, ARROW, DOT,
     
     // Special
     NEWLINE,

@@ -14,6 +14,8 @@ std::unordered_map<std::string, TokenType> Lexer::keywords = {
     {"true", TokenType::TRUE},
     {"false", TokenType::FALSE},
     {"void", TokenType::VOID},
+    {"struct", TokenType::STRUCT},
+    {"impl", TokenType::IMPL},
     {"int", TokenType::INT_TYPE},
     {"long", TokenType::LONG_TYPE},
     {"float", TokenType::FLOAT_TYPE},
@@ -236,6 +238,7 @@ Token Lexer::scanToken() {
         case ';': return makeToken(TokenType::SEMICOLON);
         case ',': return makeToken(TokenType::COMMA);
         case ':': return makeToken(TokenType::COLON);
+        case '.': return makeToken(TokenType::DOT);
         case '[': return makeToken(TokenType::LBRACKET);
         case ']': return makeToken(TokenType::RBRACKET);
         case '+': return makeToken(TokenType::PLUS);

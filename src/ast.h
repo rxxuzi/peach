@@ -52,6 +52,14 @@ public:
         : elementType(std::move(elem)), size(std::move(s)) {}
     std::string toCType() const override;
 };
+
+class StructTypeNode : public TypeNode {
+public:
+    std::string structName;
+    
+    explicit StructTypeNode(const std::string& name) : structName(name) {}
+    std::string toCType() const override;
+};
 // Expression nodes
 class ExprNode : public ASTNode {
 public:
@@ -156,6 +164,34 @@ public:
     explicit DereferenceNode(ExprNodePtr op) : operand(std::move(op)) {}
 };
 
+class FieldAccessNode : public ExprNode {
+public:
+    ExprNodePtr object;
+    std::string fieldName;
+    
+    FieldAccessNode(ExprNodePtr obj, const std::string& field)
+        : object(std::move(obj)), fieldName(field) {}
+};
+
+class StructInitNode : public ExprNode {
+public:
+    std::string structName;
+    std::vector<std::pair<std::string, ExprNodePtr>> fields; // field name -> value
+    
+    StructInitNode(const std::string& name, std::vector<std::pair<std::string, ExprNodePtr>> f)
+        : structName(name), fields(std::move(f)) {}
+};
+
+class MethodCallNode : public ExprNode {
+public:
+    ExprNodePtr receiver;
+    std::string methodName;
+    std::vector<ExprNodePtr> arguments;
+    
+    MethodCallNode(ExprNodePtr rec, const std::string& name, std::vector<ExprNodePtr> args)
+        : receiver(std::move(rec)), methodName(name), arguments(std::move(args)) {}
+};
+
 // Statement nodes
 class StmtNode : public ASTNode {
 public:
@@ -232,6 +268,23 @@ public:
         : iteratorName(iter), collection(std::move(coll)), body(std::move(b)) {}
 };
 
+struct StructField {
+    std::string name;
+    TypeNodePtr type;
+    
+    StructField(const std::string& n, TypeNodePtr t) 
+        : name(n), type(std::move(t)) {}
+};
+
+class StructDefNode : public StmtNode {
+public:
+    std::string name;
+    std::vector<StructField> fields;
+    
+    StructDefNode(const std::string& n, std::vector<StructField> f)
+        : name(n), fields(std::move(f)) {}
+};
+
 // Function and program nodes
 class FunctionNode : public ASTNode {
 public:
@@ -248,8 +301,26 @@ public:
           returnType(std::move(ret)), body(std::move(b)) {}
 };
 
+enum class ReceiverType {
+    Value,    // Point
+    Pointer,  // *Point  
+    Reference // &Point
+};
+
+class ImplBlockNode : public StmtNode {
+public:
+    ReceiverType receiverType;
+    std::string structName;
+    std::vector<std::unique_ptr<FunctionNode>> methods;
+    
+    ImplBlockNode(ReceiverType type, const std::string& name, std::vector<std::unique_ptr<FunctionNode>> m)
+        : receiverType(type), structName(name), methods(std::move(m)) {}
+};
+
 class ProgramNode : public ASTNode {
 public:
     std::vector<std::unique_ptr<FunctionNode>> functions;
     std::vector<StmtNodePtr> globalDeclarations;
+    std::vector<std::unique_ptr<StructDefNode>> structs;
+    std::vector<std::unique_ptr<ImplBlockNode>> implBlocks;
 };

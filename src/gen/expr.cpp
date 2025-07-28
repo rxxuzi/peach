@@ -30,6 +30,12 @@ void ExprGenerator::generate(ExprNode* node) {
         generateAddressOf(addrOf);
     } else if (auto* deref = dynamic_cast<DereferenceNode*>(node)) {
         generateDereference(deref);
+    } else if (auto* fieldAccess = dynamic_cast<FieldAccessNode*>(node)) {
+        generateFieldAccess(fieldAccess);
+    } else if (auto* structInit = dynamic_cast<StructInitNode*>(node)) {
+        generateStructInit(structInit);
+    } else if (auto* methodCall = dynamic_cast<MethodCallNode*>(node)) {
+        generateMethodCall(methodCall);
     }
 }
 
@@ -159,6 +165,72 @@ void ExprGenerator::generateAddressOf(AddressOfNode* node) {
 void ExprGenerator::generateDereference(DereferenceNode* node) {
     emit("*(");
     generate(node->operand.get());
+    emit(")");
+}
+
+void ExprGenerator::generateFieldAccess(FieldAccessNode* node) {
+    generate(node->object.get());
+    emit(".");
+    emit(node->fieldName);
+}
+
+void ExprGenerator::generateStructInit(StructInitNode* node) {
+    emit("(struct " + node->structName + "){");
+    
+    for (size_t i = 0; i < node->fields.size(); i++) {
+        if (i > 0) emit(", ");
+        
+        const auto& field = node->fields[i];
+        if (!field.first.empty()) {
+            // Named field initialization: .fieldName = value
+            emit("." + field.first + " = ");
+        }
+        generate(field.second.get());
+    }
+    
+    emit("}");
+}
+
+void ExprGenerator::generateMethodCall(MethodCallNode* node) {
+    // Try to determine the struct type of the receiver
+    std::string structName;
+    
+    if (auto* ident = dynamic_cast<IdentifierNode*>(node->receiver.get())) {
+        // Look up variable type from symbol table or type registry
+        if (symbolTable && symbolTable->hasSymbol(ident->name)) {
+            std::string varType = symbolTable->getSymbolType(ident->name);
+            // Extract struct name from "struct StructName" format
+            if (varType.find("struct ") == 0) {
+                structName = varType.substr(7); // Remove "struct " prefix
+            }
+        } else if (typeRegistry) {
+            std::string varType = typeRegistry->getVariableType(ident->name);
+            if (varType.find("struct ") == 0) {
+                structName = varType.substr(7);
+            }
+        }
+    }
+    
+    // If we couldn't determine the struct type, use a fallback
+    if (structName.empty()) {
+        // Debug: emit a comment to help diagnose type resolution issues
+        if (auto* id = dynamic_cast<IdentifierNode*>(node->receiver.get())) {
+            emit("/* ERROR: Could not determine struct type for " + id->name + " */ ");
+        } else {
+            emit("/* ERROR: Could not determine struct type for receiver */ ");
+        }
+        structName = "UnknownStruct";
+    }
+    
+    // Generate function call: __StructName_methodName(receiver, args...)
+    emit("__" + structName + "_" + node->methodName + "(");
+    generate(node->receiver.get());
+    
+    for (auto& arg : node->arguments) {
+        emit(", ");
+        generate(arg.get());
+    }
+    
     emit(")");
 }
 

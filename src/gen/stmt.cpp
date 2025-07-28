@@ -38,7 +38,7 @@ void StmtGenerator::generateVarDecl(VarDeclNode* node) {
         emit(node->name);
     } else if (node->initializer) {
         // Infer type from initializer
-        TypeGenerator typeGen(output, indentLevel);
+        TypeGenerator typeGen(output, indentLevel, nullptr, typeRegistry);
         std::string inferredType = typeGen.inferType(node->initializer.get());
         
         if (auto* arrayLit = dynamic_cast<ArrayLiteralNode*>(node->initializer.get())) {
@@ -58,7 +58,27 @@ void StmtGenerator::generateVarDecl(VarDeclNode* node) {
     
     if (node->initializer) {
         emit(" = ");
+        
+        // Create expression generator with current scope
+        ExprGenerator exprGen(output, indentLevel, currentScope, typeRegistry);
         exprGen.generate(node->initializer.get());
+        
+        // Register variable type in current scope and type registry
+        std::string varType;
+        if (node->type) {
+            varType = node->type->toCType();
+        } else {
+            // Infer type from initializer
+            TypeGenerator typeGen(output, indentLevel, currentScope, typeRegistry);
+            varType = typeGen.inferType(node->initializer.get());
+        }
+        
+        if (currentScope && !varType.empty()) {
+            currentScope->addSymbol(node->name, varType);
+        }
+        if (typeRegistry && !varType.empty()) {
+            typeRegistry->registerVariable(node->name, varType);
+        }
     }
     emit(";\n");
 }
@@ -79,6 +99,7 @@ void StmtGenerator::generateBlock(BlockNode* node) {
 void StmtGenerator::generateIf(IfNode* node) {
     indent();
     emit("if (");
+    ExprGenerator exprGen(output, indentLevel, currentScope, typeRegistry);
     exprGen.generate(node->condition.get());
     emit(") ");
     
@@ -119,6 +140,7 @@ void StmtGenerator::generateIf(IfNode* node) {
 void StmtGenerator::generateWhile(WhileNode* node) {
     indent();
     emit("while (");
+    ExprGenerator exprGen(output, indentLevel, currentScope, typeRegistry);
     exprGen.generate(node->condition.get());
     emit(") ");
     
@@ -152,6 +174,7 @@ void StmtGenerator::generateFor(ForNode* node) {
 
 void StmtGenerator::generateForRange(ForNode* node, CallNode* rangeCall) {
     indent();
+    ExprGenerator exprGen(output, indentLevel, currentScope, typeRegistry);
     
     if (rangeCall->arguments.size() == 1) {
         emit("for (int " + node->iteratorName + " = 0; " + 
@@ -191,6 +214,7 @@ void StmtGenerator::generateForRange(ForNode* node, CallNode* rangeCall) {
 
 void StmtGenerator::generateForArray(ForNode* node) {
     indent();
+    ExprGenerator exprGen(output, indentLevel, currentScope, typeRegistry);
     emit("// For-each loop for array\n");
     indent();
     emit("for (int _i = 0; _i < sizeof(");
@@ -230,12 +254,14 @@ void StmtGenerator::generateReturn(ReturnNode* node) {
     emit("return");
     if (node->value) {
         emit(" ");
+        ExprGenerator exprGen(output, indentLevel, currentScope, typeRegistry);
         exprGen.generate(node->value.get());
     }
 }
 
 void StmtGenerator::generateExprStmt(ExprStmtNode* node) {
     indent();
+    ExprGenerator exprGen(output, indentLevel, currentScope, typeRegistry);
     exprGen.generate(node->expr.get());
     emit(";\n");
 }
