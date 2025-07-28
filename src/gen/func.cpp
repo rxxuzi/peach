@@ -35,7 +35,18 @@ void FuncGenerator::generateParameters(const std::vector<std::pair<std::string, 
     } else {
         for (size_t i = 0; i < params.size(); i++) {
             if (i > 0) emit(", ");
-            emit(params[i].second->toCType());
+            std::string paramType = params[i].second->toCType();
+            // Convert array parameters to pointer parameters for C compatibility
+            if (paramType.find("[") != std::string::npos) {
+                // Extract element type from array type like "[5]int" -> "int*"
+                size_t bracketPos = paramType.find("[");
+                size_t closeBracketPos = paramType.find("]");
+                if (closeBracketPos != std::string::npos) {
+                    std::string elementType = paramType.substr(closeBracketPos + 1);
+                    paramType = elementType + "*";
+                }
+            }
+            emit(paramType);
             emit(" ");
             emit(params[i].first);
         }

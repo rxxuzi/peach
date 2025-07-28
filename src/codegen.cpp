@@ -39,6 +39,12 @@ void CodeGenerator::generateProgram(ProgramNode* node) {
         output << "\n";
     }
     
+    // Generate union definitions
+    for (auto& unionDef : node->unions) {
+        generateUnion(unionDef.get());
+        output << "\n";
+    }
+    
     // Generate global declarations
     for (auto& decl : node->globalDeclarations) {
         stmtGen.generate(decl.get());
@@ -187,6 +193,16 @@ void CodeGenerator::generateStruct(StructDefNode* node) {
     output << "};\n";
 }
 
+void CodeGenerator::generateUnion(UnionDefNode* node) {
+    output << "union " << node->name << " {\n";
+    
+    for (const auto& field : node->fields) {
+        output << "    " << field.type->toCType() << " " << field.name << ";\n";
+    }
+    
+    output << "};\n";
+}
+
 void CodeGenerator::generateImplBlock(ImplBlockNode* node, FuncGenerator& funcGen) {
     // Generate methods with special naming convention and receiver parameter
     for (auto& method : node->methods) {
@@ -234,6 +250,15 @@ void CodeGenerator::buildTypeRegistry(ProgramNode* node) {
         
         for (const auto& field : structDef->fields) {
             typeRegistry.addStructField(structDef->name, field.name, field.type->toCType());
+        }
+    }
+    
+    // Register unions
+    for (const auto& unionDef : node->unions) {
+        typeRegistry.registerStruct(unionDef->name); // Use same registration for unions
+        
+        for (const auto& field : unionDef->fields) {
+            typeRegistry.addStructField(unionDef->name, field.name, field.type->toCType());
         }
     }
     

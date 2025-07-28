@@ -50,6 +50,7 @@ private:
     
     // Struct parsing
     std::unique_ptr<StructDefNode> parseStructDefinition();
+    std::unique_ptr<UnionDefNode> parseUnionDefinition();
     std::unique_ptr<ImplBlockNode> parseImplBlock();
     std::vector<StructField> parseStructFields();
     

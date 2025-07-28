@@ -328,10 +328,21 @@ ExprNodePtr Parser::parsePrimary() {
     if (match(TokenType::IDENTIFIER)) {
         std::string identifier = previous().value;
         
-        // Check for struct initialization: StructName { ... }
+        // Check for struct/union initialization: StructName { ... }
         if (check(TokenType::LBRACE)) {
             advance(); // consume '{'
             
+            // Check if this is a union initialization with single member
+            if (check(TokenType::DOT)) {
+                advance(); // consume '.'
+                Token memberName = consume(TokenType::IDENTIFIER, "Expected member name after '.'");
+                consume(TokenType::ASSIGN, "Expected '=' after member name");
+                ExprNodePtr value = parseExpression();
+                consume(TokenType::RBRACE, "Expected '}' after union member");
+                return std::make_unique<UnionInitNode>(identifier, memberName.value, std::move(value));
+            }
+            
+            // Regular struct initialization
             std::vector<std::pair<std::string, ExprNodePtr>> fields;
             
             if (!check(TokenType::RBRACE)) {
@@ -562,6 +573,8 @@ std::unique_ptr<ProgramNode> Parser::parse() {
                 program->globalDeclarations.push_back(parseVarDeclaration());
             } else if (check(TokenType::STRUCT)) {
                 program->structs.push_back(parseStructDefinition());
+            } else if (check(TokenType::UNION)) {
+                program->unions.push_back(parseUnionDefinition());
             } else if (check(TokenType::IMPL)) {
                 program->implBlocks.push_back(parseImplBlock());
             } else {
@@ -640,4 +653,16 @@ std::unique_ptr<ImplBlockNode> Parser::parseImplBlock() {
     consume(TokenType::RBRACE, "Expected '}' after impl block");
     
     return std::make_unique<ImplBlockNode>(receiverType, structName, std::move(methods));
+}
+
+std::unique_ptr<UnionDefNode> Parser::parseUnionDefinition() {
+    consume(TokenType::UNION, "Expected 'union'");
+    Token nameToken = consume(TokenType::IDENTIFIER, "Expected union name");
+    consume(TokenType::LBRACE, "Expected '{' after union name");
+    
+    std::vector<StructField> fields = parseStructFields(); // Reuse struct field parsing
+    
+    consume(TokenType::RBRACE, "Expected '}' after union fields");
+    
+    return std::make_unique<UnionDefNode>(nameToken.value, std::move(fields));
 }

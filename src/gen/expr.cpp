@@ -34,6 +34,8 @@ void ExprGenerator::generate(ExprNode* node) {
         generateFieldAccess(fieldAccess);
     } else if (auto* structInit = dynamic_cast<StructInitNode*>(node)) {
         generateStructInit(structInit);
+    } else if (auto* unionInit = dynamic_cast<UnionInitNode*>(node)) {
+        generateUnionInit(unionInit);
     } else if (auto* methodCall = dynamic_cast<MethodCallNode*>(node)) {
         generateMethodCall(methodCall);
     }
@@ -209,6 +211,27 @@ void ExprGenerator::generateMethodCall(MethodCallNode* node) {
                 structName = varType.substr(7);
             }
         }
+    } else if (auto* fieldAccess = dynamic_cast<FieldAccessNode*>(node->receiver.get())) {
+        // Handle nested field access like c1.center.magnitude()
+        if (auto* baseIdent = dynamic_cast<IdentifierNode*>(fieldAccess->object.get())) {
+            std::string baseType;
+            if (symbolTable && symbolTable->hasSymbol(baseIdent->name)) {
+                baseType = symbolTable->getSymbolType(baseIdent->name);
+            } else if (typeRegistry) {
+                baseType = typeRegistry->getVariableType(baseIdent->name);
+            }
+            
+            if (baseType.find("struct ") == 0) {
+                std::string baseStructName = baseType.substr(7);
+                // Look up the field type in the struct
+                if (typeRegistry) {
+                    std::string fieldType = typeRegistry->getFieldType(baseStructName, fieldAccess->fieldName);
+                    if (fieldType.find("struct ") == 0) {
+                        structName = fieldType.substr(7);
+                    }
+                }
+            }
+        }
     }
     
     // If we couldn't determine the struct type, use a fallback
@@ -232,5 +255,11 @@ void ExprGenerator::generateMethodCall(MethodCallNode* node) {
     }
     
     emit(")");
+}
+
+void ExprGenerator::generateUnionInit(UnionInitNode* node) {
+    emit("(union " + node->unionName + "){." + node->activeMember + " = ");
+    generate(node->value.get());
+    emit("}");
 }
 

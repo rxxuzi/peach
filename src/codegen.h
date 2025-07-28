@@ -20,6 +20,7 @@ public:
 private:
     void generateProgram(ProgramNode* node);
     void generateStruct(StructDefNode* node);
+    void generateUnion(UnionDefNode* node);
     void generateImplBlock(ImplBlockNode* node, class FuncGenerator& funcGen);
     void analyzeUsage(ProgramNode* node);
     void analyzeFunction(FunctionNode* node);

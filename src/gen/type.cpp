@@ -116,6 +116,9 @@ std::string TypeGenerator::inferType(ExprNode* expr) {
     } else if (auto* structInit = dynamic_cast<StructInitNode*>(expr)) {
         // Struct initialization - return the struct type
         return "struct " + structInit->structName;
+    } else if (auto* unionInit = dynamic_cast<UnionInitNode*>(expr)) {
+        // Union initialization - return the union type
+        return "union " + unionInit->unionName;
     } else if (auto* ident = dynamic_cast<IdentifierNode*>(expr)) {
         // Identifiers - use symbol table for type lookup
         if (symbolTable && symbolTable->hasSymbol(ident->name)) {
@@ -141,10 +144,16 @@ std::string TypeGenerator::inferType(ExprNode* expr) {
                     varType = typeRegistry->getVariableType(ident->name);
                 }
                 
-                // Extract struct name and look up field type
+                // Extract struct/union name and look up field type
                 if (varType.find("struct ") == 0) {
                     std::string structName = varType.substr(7);
                     std::string fieldType = typeRegistry->getFieldType(structName, fieldAccess->fieldName);
+                    if (!fieldType.empty()) {
+                        return fieldType;
+                    }
+                } else if (varType.find("union ") == 0) {
+                    std::string unionName = varType.substr(6);
+                    std::string fieldType = typeRegistry->getFieldType(unionName, fieldAccess->fieldName);
                     if (!fieldType.empty()) {
                         return fieldType;
                     }

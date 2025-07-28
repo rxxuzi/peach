@@ -35,5 +35,6 @@ private:
     void generateDereference(DereferenceNode* node);
     void generateFieldAccess(FieldAccessNode* node);
     void generateStructInit(StructInitNode* node);
+    void generateUnionInit(UnionInitNode* node);
     void generateMethodCall(MethodCallNode* node);
 };

@@ -182,6 +182,16 @@ public:
         : structName(name), fields(std::move(f)) {}
 };
 
+class UnionInitNode : public ExprNode {
+public:
+    std::string unionName;
+    std::string activeMember; // which member is being initialized
+    ExprNodePtr value;
+    
+    UnionInitNode(const std::string& name, const std::string& member, ExprNodePtr val)
+        : unionName(name), activeMember(member), value(std::move(val)) {}
+};
+
 class MethodCallNode : public ExprNode {
 public:
     ExprNodePtr receiver;
@@ -285,6 +295,15 @@ public:
         : name(n), fields(std::move(f)) {}
 };
 
+class UnionDefNode : public StmtNode {
+public:
+    std::string name;
+    std::vector<StructField> fields; // Reuse StructField for union members
+    
+    UnionDefNode(const std::string& n, std::vector<StructField> f)
+        : name(n), fields(std::move(f)) {}
+};
+
 // Function and program nodes
 class FunctionNode : public ASTNode {
 public:
@@ -322,5 +341,6 @@ public:
     std::vector<std::unique_ptr<FunctionNode>> functions;
     std::vector<StmtNodePtr> globalDeclarations;
     std::vector<std::unique_ptr<StructDefNode>> structs;
+    std::vector<std::unique_ptr<UnionDefNode>> unions;
     std::vector<std::unique_ptr<ImplBlockNode>> implBlocks;
 };

@@ -215,13 +215,56 @@ void StmtGenerator::generateForRange(ForNode* node, CallNode* rangeCall) {
 void StmtGenerator::generateForArray(ForNode* node) {
     indent();
     ExprGenerator exprGen(output, indentLevel, currentScope, typeRegistry);
+    
+    // Check if the collection is an identifier (array variable)
+    std::string arrayName;
+    std::string arrayType;
+    int arraySize = -1;
+    bool isPointerParam = false;
+    
+    if (auto* ident = dynamic_cast<IdentifierNode*>(node->collection.get())) {
+        arrayName = ident->name;
+        // Look up array type and size from symbol table or type registry
+        if (currentScope && currentScope->hasSymbol(arrayName)) {
+            arrayType = currentScope->getSymbolType(arrayName);
+        } else if (typeRegistry) {
+            arrayType = typeRegistry->getVariableType(arrayName);
+        }
+        
+        // Check if it's a pointer parameter (int*) 
+        if (arrayType.find("*") != std::string::npos) {
+            isPointerParam = true;
+        } else if (arrayType.find("[") != std::string::npos) {
+            // Extract array size from type like "[5]int"
+            size_t start = arrayType.find("[");
+            size_t end = arrayType.find("]");
+            if (end != std::string::npos) {
+                std::string sizeStr = arrayType.substr(start + 1, end - start - 1);
+                arraySize = std::stoi(sizeStr);
+            }
+        }
+    }
+    
     emit("// For-each loop for array\n");
     indent();
-    emit("for (int _i = 0; _i < sizeof(");
-    exprGen.generate(node->collection.get());
-    emit(")/sizeof(");
-    exprGen.generate(node->collection.get());
-    emit("[0]); _i++) {\n");
+    
+    if (isPointerParam) {
+        // For pointer parameters, we need a different approach
+        // For now, emit an error since we don't know the size
+        emit("/* ERROR: Cannot iterate over pointer parameter without size */ \n");
+        indent();
+        emit("for (int _i = 0; _i < 1 /* UNKNOWN SIZE */; _i++) {\n");
+    } else if (arraySize > 0) {
+        // Use known array size
+        emit("for (int _i = 0; _i < " + std::to_string(arraySize) + "; _i++) {\n");
+    } else {
+        // Fallback to sizeof approach (works for local arrays)
+        emit("for (int _i = 0; _i < sizeof(");
+        exprGen.generate(node->collection.get());
+        emit(")/sizeof(");
+        exprGen.generate(node->collection.get());
+        emit("[0]); _i++) {\n");
+    }
     
     indentLevel++;
     indent();
