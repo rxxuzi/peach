@@ -51,23 +51,64 @@ std::string TypeGenerator::inferType(ExprNode* expr) {
         return "int"; // Default array element type
     } else if (auto* deref = dynamic_cast<DereferenceNode*>(expr)) {
         // Dereference of a pointer gives the pointed-to type
-        // Since we don't have full type information here, assume int
-        return "int";
+        std::string ptrType = inferType(deref->operand.get());
+        // Remove the trailing '*' if it exists
+        if (ptrType.length() > 1 && ptrType.back() == '*') {
+            return ptrType.substr(0, ptrType.length() - 1);
+        }
+        return "int"; // Fallback
     } else if (auto* binOp = dynamic_cast<BinaryOpNode*>(expr)) {
-        // For binary operations, infer from the left operand
-        // Assignment operations should not appear here in variable initialization
+        // For binary operations, need to consider type promotion
         if (binOp->op == "=") {
             // This shouldn't happen in a proper parse
             return "int";
         }
-        return inferType(binOp->left.get());
+        
+        std::string leftType = inferType(binOp->left.get());
+        std::string rightType = inferType(binOp->right.get());
+        
+        // Type promotion rules
+        if (leftType == "double" || rightType == "double") {
+            return "double";
+        } else if (leftType == "float" || rightType == "float") {
+            return "float";
+        } else if (leftType == "long" || rightType == "long") {
+            return "long";
+        } else {
+            return "int";
+        }
     } else if (auto* addrOf = dynamic_cast<AddressOfNode*>(expr)) {
         // Address-of gives a pointer type
-        // We'd need more context to determine the exact pointer type
-        return "int*";
+        // Try to determine the type of the operand
+        std::string operandType = inferType(addrOf->operand.get());
+        return operandType + "*";
+    } else if (auto* call = dynamic_cast<CallNode*>(expr)) {
+        // Function calls - for now assume int, but could be extended
+        // to track function return types
+        return "int";
+    } else if (auto* ident = dynamic_cast<IdentifierNode*>(expr)) {
+        // Identifiers - use symbol table for type lookup
+        if (symbolTable && symbolTable->hasSymbol(ident->name)) {
+            return symbolTable->getSymbolType(ident->name);
+        }
+        return "int"; // Fallback
     } else {
         return "int"; // Default type
     }
+}
+
+std::string TypeGenerator::inferTypeWithContext(ExprNode* expr, SymbolTable* symbols) {
+    // Temporarily set the symbol table
+    SymbolTable* oldTable = symbolTable;
+    symbolTable = symbols;
+    
+    // Use the existing inferType method
+    std::string result = inferType(expr);
+    
+    // Restore the old symbol table
+    symbolTable = oldTable;
+    
+    return result;
 }
 
 int TypeGenerator::calculateArraySize(ArrayLiteralNode* literal) {
