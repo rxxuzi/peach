@@ -26,6 +26,7 @@ enum class TokenType {
     SEMICOLON, COMMA, COLON, ARROW,
     
     // Special
+    NEWLINE,
     END_OF_FILE,
     UNKNOWN
 };

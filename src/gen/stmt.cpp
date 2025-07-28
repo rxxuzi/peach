@@ -23,17 +23,16 @@ void StmtGenerator::generate(StmtNode* node) {
 void StmtGenerator::generateVarDecl(VarDeclNode* node) {
     indent();
     
-    // Generate const if needed
-    if (node->isConst) {
-        emit("const ");
-    }
-    
-    // Handle array types specially
+    // Handle array types specially (const arrays cause issues with pointer passing)
     if (auto* arrayType = dynamic_cast<ArrayTypeNode*>(node->type.get())) {
         TypeGenerator typeGen(output, indentLevel);
         std::string decl = typeGen.generateArrayDeclaration(arrayType, node->name, node->initializer.get());
         emit(decl);
     } else if (node->type) {
+        // Generate const for non-array types
+        if (node->isConst) {
+            emit("const ");
+        }
         emit(node->type->toCType());
         emit(" ");
         emit(node->name);
@@ -43,9 +42,14 @@ void StmtGenerator::generateVarDecl(VarDeclNode* node) {
         std::string inferredType = typeGen.inferType(node->initializer.get());
         
         if (auto* arrayLit = dynamic_cast<ArrayLiteralNode*>(node->initializer.get())) {
+            // For array literals, don't use const to avoid pointer passing issues
             int size = arrayLit->elements.size();
             emit(inferredType + " " + node->name + "[" + std::to_string(size) + "]");
         } else {
+            // Generate const for non-array types
+            if (node->isConst) {
+                emit("const ");
+            }
             emit(inferredType + " " + node->name);
         }
     } else {

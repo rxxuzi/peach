@@ -15,6 +15,7 @@ void BuiltinGenerator::generateAll() {
     if (usage.isLenUsed() || usage.isSizeofUsed()) {
         generateUtilityMacros();
     }
+    
 }
 
 void BuiltinGenerator::generateIncludes() {
@@ -127,3 +128,4 @@ void BuiltinGenerator::generateUtilityMacros() {
         emitLine("");
     }
 }
+

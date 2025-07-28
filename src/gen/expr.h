@@ -1,11 +1,18 @@
 #pragma once
 #include "base.h"
+#include "symbol_table.h"
 #include "../ast.h"
 
 class ExprGenerator : public CodeGenBase {
+private:
+    SymbolTable* symbolTable;
+    
 public:
     ExprGenerator(std::stringstream& out, int& indent) 
-        : CodeGenBase(out, indent) {}
+        : CodeGenBase(out, indent), symbolTable(nullptr) {}
+    
+    ExprGenerator(std::stringstream& out, int& indent, SymbolTable* symbols) 
+        : CodeGenBase(out, indent), symbolTable(symbols) {}
     
     void generate(ExprNode* node);
     

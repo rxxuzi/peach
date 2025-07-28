@@ -1,5 +1,6 @@
 #include "func.h"
 #include "expr.h"
+#include "symbol_table.h"
 
 void FuncGenerator::generate(FunctionNode* node) {
     generateSignature(node);
@@ -12,8 +13,9 @@ void FuncGenerator::generateSignature(FunctionNode* node) {
     if (node->returnType) {
         emit(node->returnType->toCType());
     } else {
-        // Infer return type - for now default to void
-        emit("void");
+        // Infer return type from function body with parameter context
+        std::string inferredType = inferReturnTypeWithContext(node->body.get(), node->parameters);
+        emit(inferredType);
     }
     emit(" ");
     
@@ -47,7 +49,15 @@ void FuncGenerator::generateBody(FunctionNode* node) {
         // Single expression body - wrap in block with return
         emitLine("{");
         indentLevel++;
-        if (node->returnType && node->returnType->toCType() != "void") {
+        
+        std::string returnType;
+        if (node->returnType) {
+            returnType = node->returnType->toCType();
+        } else {
+            returnType = inferReturnTypeWithContext(node->body.get(), node->parameters);
+        }
+        
+        if (returnType != "void") {
             indent();
             emit("return ");
             ExprGenerator exprGen(output, indentLevel);
@@ -61,4 +71,67 @@ void FuncGenerator::generateBody(FunctionNode* node) {
     } else {
         stmtGen.generate(node->body.get());
     }
+}
+
+std::string FuncGenerator::inferReturnType(StmtNode* body) {
+    std::vector<std::pair<std::string, TypeNodePtr>> emptyParams;
+    return inferReturnTypeWithContext(body, emptyParams);
+}
+
+std::string FuncGenerator::inferReturnTypeWithContext(StmtNode* body, const std::vector<std::pair<std::string, TypeNodePtr>>& parameters) {
+    // Create symbol table with function parameters
+    SymbolTable symbolTable;
+    for (const auto& param : parameters) {
+        symbolTable.addSymbol(param.first, param.second->toCType());
+    }
+    
+    // Handle expression statements (single expression functions)
+    if (auto* exprStmt = dynamic_cast<ExprStmtNode*>(body)) {
+        TypeGenerator typeGen(output, indentLevel, &symbolTable);
+        return typeGen.inferType(exprStmt->expr.get());
+    }
+    
+    // Handle block statements
+    if (auto* block = dynamic_cast<BlockNode*>(body)) {
+        std::string returnType = "void"; // Default
+        
+        // Look for return statements in the block
+        for (const auto& stmt : block->statements) {
+            if (auto* returnStmt = dynamic_cast<ReturnNode*>(stmt.get())) {
+                if (returnStmt->value) {
+                    TypeGenerator typeGen(output, indentLevel, &symbolTable);
+                    return typeGen.inferType(returnStmt->value.get());
+                } else {
+                    return "void";
+                }
+            }
+            
+            // Recursively check nested blocks
+            if (auto* nestedBlock = dynamic_cast<BlockNode*>(stmt.get())) {
+                std::string nestedType = inferReturnType(nestedBlock);
+                if (nestedType != "void") {
+                    returnType = nestedType;
+                }
+            }
+            
+            // Check if statements
+            if (auto* ifStmt = dynamic_cast<IfNode*>(stmt.get())) {
+                std::string thenType = inferReturnType(ifStmt->thenBranch.get());
+                if (thenType != "void") {
+                    returnType = thenType;
+                }
+                if (ifStmt->elseBranch) {
+                    std::string elseType = inferReturnType(ifStmt->elseBranch.get());
+                    if (elseType != "void") {
+                        returnType = elseType;
+                    }
+                }
+            }
+        }
+        
+        return returnType;
+    }
+    
+    // Default case
+    return "void";
 }

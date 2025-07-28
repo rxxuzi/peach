@@ -161,3 +161,4 @@ void ExprGenerator::generateDereference(DereferenceNode* node) {
     generate(node->operand.get());
     emit(")");
 }
+
