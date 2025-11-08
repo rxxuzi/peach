@@ -13,21 +13,51 @@ use std::fs;
 use std::io;
 use std::path::Path;
 
-/// Main compilation function
+/// Compilation options
+#[derive(Debug, Clone)]
+pub struct CompileOptions {
+    /// Show verbose output (progress, details)
+    pub verbose: bool,
+    /// Only perform type checking, don't generate code
+    pub check_only: bool,
+    /// Custom output file path
+    pub output_path: Option<String>,
+    /// Show warnings (placeholder for future)
+    pub warnings: bool,
+    /// Use build/ directory for output
+    pub use_build_dir: bool,
+}
+
+impl Default for CompileOptions {
+    fn default() -> Self {
+        CompileOptions {
+            verbose: true,
+            check_only: false,
+            output_path: None,
+            warnings: false,
+            use_build_dir: true,
+        }
+    }
+}
+
+/// Main compilation function (backward compatible)
 pub fn compile(input_file: &str) -> Result<(), String> {
+    compile_with_options(input_file, CompileOptions::default())
+}
+
+/// Compilation with options
+pub fn compile_with_options(input_file: &str, options: CompileOptions) -> Result<(), String> {
     // Read input file
     let source = read_file(input_file)
         .map_err(|e| format!("Failed to read file '{}': {}", input_file, e))?;
-
-    println!("Source code:");
-    println!("{}", source);
-    println!();
 
     // Create message formatter for error reporting
     let formatter = helper::MessageFormatter::new(source.clone(), input_file.to_string());
 
     // Lexer: Tokenize
-    println!("[1/4] Lexing...");
+    if options.verbose {
+        println!("[1/4] Lexing...");
+    }
     let tokens = match lexer::tokenize(&source) {
         Ok(tokens) => tokens,
         Err(e) => {
@@ -40,10 +70,14 @@ pub fn compile(input_file: &str) -> Result<(), String> {
             return Err(e);
         }
     };
-    println!("  ✓ {} tokens", tokens.len());
+    if options.verbose {
+        println!("  ✓ {} tokens", tokens.len());
+    }
 
     // Parser: Build AST
-    println!("[2/4] Parsing...");
+    if options.verbose {
+        println!("[2/4] Parsing...");
+    }
     let mut ast = match parser::parse(tokens) {
         Ok(ast) => ast,
         Err(e) => {
@@ -56,10 +90,14 @@ pub fn compile(input_file: &str) -> Result<(), String> {
             return Err(e);
         }
     };
-    println!("  ✓ AST constructed");
+    if options.verbose {
+        println!("  ✓ AST constructed");
+    }
 
     // Semantic Analysis: Type checking
-    println!("[3/4] Semantic analysis...");
+    if options.verbose {
+        println!("[3/4] Semantic analysis...");
+    }
     match semantic::analyze(&mut ast, &source, input_file) {
         Ok(_) => {},
         Err(_) => {
@@ -67,18 +105,36 @@ pub fn compile(input_file: &str) -> Result<(), String> {
             return Err("Type checking failed".to_string());
         }
     };
-    println!("  ✓ Type checking passed");
+    if options.verbose {
+        println!("  ✓ Type checking passed");
+    }
+
+    // If check-only mode, stop here
+    if options.check_only {
+        return Ok(());
+    }
 
     // Generator: Generate C code
-    println!("[4/4] Generating C code...");
+    if options.verbose {
+        println!("[4/4] Generating C code...");
+    }
     let c_code = generator::generate(&ast)?;
 
     // Write output
-    let output_file = get_output_path(input_file);
+    let output_file = if let Some(ref custom_path) = options.output_path {
+        custom_path.clone()
+    } else if options.use_build_dir {
+        get_output_path_build(input_file)
+    } else {
+        get_output_path_current(input_file)
+    };
+
     write_file(&output_file, &c_code)
         .map_err(|e| format!("Failed to write file '{}': {}", output_file, e))?;
 
-    println!("  ✓ Generated: {}", output_file);
+    if options.verbose {
+        println!("  ✓ Generated: {}", output_file);
+    }
 
     Ok(())
 }
@@ -95,8 +151,14 @@ fn write_file(path: &str, content: &str) -> io::Result<()> {
     fs::write(path, content)
 }
 
-fn get_output_path(input_file: &str) -> String {
+fn get_output_path_build(input_file: &str) -> String {
     let path = Path::new(input_file);
     let stem = path.file_stem().unwrap().to_str().unwrap();
     format!("build/{}.c", stem)
+}
+
+fn get_output_path_current(input_file: &str) -> String {
+    let path = Path::new(input_file);
+    let stem = path.file_stem().unwrap().to_str().unwrap();
+    format!("{}.c", stem)
 }
