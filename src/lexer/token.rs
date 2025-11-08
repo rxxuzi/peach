@@ -9,6 +9,12 @@ pub enum TokenType {
     Var,        // var
     If,         // if
     Else,       // else
+    While,      // while
+    Loop,       // loop
+    For,        // for
+    In,         // in
+    Break,      // break
+    Continue,   // continue
 
     // Types
     I8,         // i8
@@ -61,7 +67,11 @@ pub enum TokenType {
     RightParen,     // )
     LeftBrace,      // {
     RightBrace,     // }
+    LeftBracket,    // [
+    RightBracket,   // ]
     Arrow,          // ->
+    LeftArrow,      // <-
+    DotDot,         // ..
     Colon,          // :
     Semicolon,      // ;
     Comma,          // ,

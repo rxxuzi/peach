@@ -54,6 +54,8 @@ impl Scanner {
             ')' => self.add_token(TokenType::RightParen),
             '{' => self.add_token(TokenType::LeftBrace),
             '}' => self.add_token(TokenType::RightBrace),
+            '[' => self.add_token(TokenType::LeftBracket),
+            ']' => self.add_token(TokenType::RightBracket),
             ':' => self.add_token(TokenType::Colon),
             ';' => self.add_token(TokenType::Semicolon),
             ',' => self.add_token(TokenType::Comma),
@@ -77,6 +79,8 @@ impl Scanner {
             '<' => {
                 if self.match_char('=') {
                     self.add_token(TokenType::LessEqual);
+                } else if self.match_char('-') {
+                    self.add_token(TokenType::LeftArrow);
                 } else {
                     self.add_token(TokenType::Less);
                 }
@@ -118,6 +122,16 @@ impl Scanner {
                     self.add_token(TokenType::Arrow);
                 } else {
                     self.add_token(TokenType::Minus);
+                }
+            }
+            '.' => {
+                if self.match_char('.') {
+                    self.add_token(TokenType::DotDot);
+                } else {
+                    return Err(format!(
+                        "Unexpected character '.' at line {} column {}",
+                        self.line, self.column
+                    ));
                 }
             }
             _ => {
@@ -175,6 +189,12 @@ impl Scanner {
             "var" => TokenType::Var,
             "if" => TokenType::If,
             "else" => TokenType::Else,
+            "while" => TokenType::While,
+            "loop" => TokenType::Loop,
+            "for" => TokenType::For,
+            "in" => TokenType::In,
+            "break" => TokenType::Break,
+            "continue" => TokenType::Continue,
             // Types
             "i8" => TokenType::I8,
             "i16" => TokenType::I16,

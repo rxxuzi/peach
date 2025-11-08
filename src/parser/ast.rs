@@ -92,8 +92,13 @@ pub struct Block {
 pub enum Statement {
     Return(ReturnStatement),
     VarDecl(VarDeclStatement),
-    Assignment(AssignmentStatement),  // New!
+    Assignment(AssignmentStatement),
     If(IfStatement),
+    While(WhileStatement),
+    Loop(LoopStatement),
+    For(ForStatement),
+    Break(BreakStatement),
+    Continue(ContinueStatement),
     Expression(Expression),  // Expression statement (for function calls)
 }
 
@@ -178,3 +183,33 @@ pub struct CallExpression {
     pub callee: String,
     pub arguments: Vec<Expression>,
 }
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct WhileStatement {
+    pub condition: Expression,
+    pub body: Block,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct LoopStatement {
+    pub body: Block,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ForStatement {
+    pub variable: String,
+    pub iterable: ForIterable,
+    pub body: Block,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum ForIterable {
+    Range(Box<Expression>, Box<Expression>),  // start..end
+    Array(Vec<Expression>),  // [1, 2, 3, 4]
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct BreakStatement {}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ContinueStatement {}

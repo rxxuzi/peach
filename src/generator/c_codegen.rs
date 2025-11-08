@@ -125,6 +125,98 @@ impl CCodeGenerator {
                     self.emit_line("}");
                 }
             }
+            Statement::While(while_stmt) => {
+                let condition = self.expression_to_c(&while_stmt.condition);
+                self.emit_line(&format!("while ({})", condition));
+                self.emit_line("{");
+                self.indent();
+
+                for stmt in &while_stmt.body.statements {
+                    self.generate_statement(stmt)?;
+                }
+
+                self.dedent();
+                self.emit_line("}");
+            }
+            Statement::Loop(loop_stmt) => {
+                self.emit_line("while (1)");
+                self.emit_line("{");
+                self.indent();
+
+                for stmt in &loop_stmt.body.statements {
+                    self.generate_statement(stmt)?;
+                }
+
+                self.dedent();
+                self.emit_line("}");
+            }
+            Statement::For(for_stmt) => {
+                match &for_stmt.iterable {
+                    ForIterable::Range(start, end) => {
+                        let start_expr = self.expression_to_c(start);
+                        let end_expr = self.expression_to_c(end);
+                        let var = &for_stmt.variable;
+
+                        self.emit_line(&format!(
+                            "for (int32_t {} = {}; {} < {}; {}++)",
+                            var, start_expr, var, end_expr, var
+                        ));
+                        self.emit_line("{");
+                        self.indent();
+
+                        for stmt in &for_stmt.body.statements {
+                            self.generate_statement(stmt)?;
+                        }
+
+                        self.dedent();
+                        self.emit_line("}");
+                    }
+                    ForIterable::Array(elements) => {
+                        // Generate array literal and iterate
+                        let var = &for_stmt.variable;
+                        let array_name = format!("__array_{}", var);
+                        let len = elements.len();
+
+                        // Declare and initialize array
+                        let elem_strings: Vec<String> = elements.iter()
+                            .map(|e| self.expression_to_c(e))
+                            .collect();
+
+                        self.emit_line(&format!(
+                            "int32_t {}[] = {{{}}};",
+                            array_name,
+                            elem_strings.join(", ")
+                        ));
+
+                        // Iterate over array
+                        self.emit_line(&format!(
+                            "for (size_t __i_{} = 0; __i_{} < {}; __i_{}++)",
+                            var, var, len, var
+                        ));
+                        self.emit_line("{");
+                        self.indent();
+
+                        // Declare loop variable
+                        self.emit_line(&format!(
+                            "int32_t {} = {}[__i_{}];",
+                            var, array_name, var
+                        ));
+
+                        for stmt in &for_stmt.body.statements {
+                            self.generate_statement(stmt)?;
+                        }
+
+                        self.dedent();
+                        self.emit_line("}");
+                    }
+                }
+            }
+            Statement::Break(_) => {
+                self.emit_line("break;");
+            }
+            Statement::Continue(_) => {
+                self.emit_line("continue;");
+            }
             Statement::Expression(expr) => {
                 let expr_code = self.expression_to_c(expr);
                 self.emit_line(&format!("{};", expr_code));

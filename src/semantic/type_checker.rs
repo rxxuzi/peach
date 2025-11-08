@@ -10,6 +10,8 @@ pub struct TypeChecker {
     function_table: HashMap<String, (Vec<Type>, Type)>,
     // Error collection
     errors: Vec<String>,
+    // Loop context tracking (for break/continue validation)
+    loop_depth: usize,
 }
 
 impl TypeChecker {
@@ -18,6 +20,7 @@ impl TypeChecker {
             symbol_table: HashMap::new(),
             function_table: HashMap::new(),
             errors: Vec::new(),
+            loop_depth: 0,
         }
     }
 
@@ -211,6 +214,109 @@ impl TypeChecker {
                 // Check else block if present
                 if let Some(ref mut else_block) = if_stmt.else_block {
                     self.check_block(else_block);
+                }
+            }
+
+            Statement::While(while_stmt) => {
+                // Check condition is boolean
+                match self.infer_expression_type(&while_stmt.condition) {
+                    Ok(cond_type) => {
+                        if cond_type != Type::Bool {
+                            self.errors.push(format!(
+                                "While condition must be boolean, found '{}'",
+                                cond_type.to_string()
+                            ));
+                        }
+                    }
+                    Err(e) => {
+                        self.errors.push(e);
+                    }
+                }
+
+                // Check body in loop context
+                self.loop_depth += 1;
+                self.check_block(&mut while_stmt.body);
+                self.loop_depth -= 1;
+            }
+
+            Statement::Loop(loop_stmt) => {
+                // Check body in loop context
+                self.loop_depth += 1;
+                self.check_block(&mut loop_stmt.body);
+                self.loop_depth -= 1;
+            }
+
+            Statement::For(for_stmt) => {
+                // Save current symbol table state
+                let saved_symbols = self.symbol_table.clone();
+
+                // Check iterable and add loop variable
+                match &for_stmt.iterable {
+                    ForIterable::Range(start, end) => {
+                        // Check that start and end are integers
+                        if let Err(e) = self.infer_expression_type(start) {
+                            self.errors.push(e);
+                        }
+                        if let Err(e) = self.infer_expression_type(end) {
+                            self.errors.push(e);
+                        }
+                        // Loop variable is i32 for ranges
+                        self.symbol_table.insert(
+                            for_stmt.variable.clone(),
+                            (Type::I32, false)  // loop variable is immutable
+                        );
+                    }
+                    ForIterable::Array(elements) => {
+                        // Infer array element type from first element
+                        if let Some(first) = elements.first() {
+                            match self.infer_expression_type(first) {
+                                Ok(elem_type) => {
+                                    // Check all elements have same type
+                                    for (i, elem) in elements.iter().enumerate().skip(1) {
+                                        match self.infer_expression_type(elem) {
+                                            Ok(t) => {
+                                                if !self.types_match(&t, &elem_type) {
+                                                    self.errors.push(format!(
+                                                        "Array element {} has type '{}', expected '{}'",
+                                                        i,
+                                                        t.to_string(),
+                                                        elem_type.to_string()
+                                                    ));
+                                                }
+                                            }
+                                            Err(e) => self.errors.push(e),
+                                        }
+                                    }
+                                    // Loop variable has element type
+                                    self.symbol_table.insert(
+                                        for_stmt.variable.clone(),
+                                        (elem_type, false)  // loop variable is immutable
+                                    );
+                                }
+                                Err(e) => self.errors.push(e),
+                            }
+                        }
+                    }
+                }
+
+                // Check body in loop context
+                self.loop_depth += 1;
+                self.check_block(&mut for_stmt.body);
+                self.loop_depth -= 1;
+
+                // Restore symbol table (remove loop variable)
+                self.symbol_table = saved_symbols;
+            }
+
+            Statement::Break(_) => {
+                if self.loop_depth == 0 {
+                    self.errors.push("'break' statement outside of loop".to_string());
+                }
+            }
+
+            Statement::Continue(_) => {
+                if self.loop_depth == 0 {
+                    self.errors.push("'continue' statement outside of loop".to_string());
                 }
             }
 

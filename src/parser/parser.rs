@@ -104,6 +104,28 @@ impl Parser {
             return self.if_statement();
         }
 
+        if self.match_token(&TokenType::While) {
+            return self.while_statement();
+        }
+
+        if self.match_token(&TokenType::Loop) {
+            return self.loop_statement();
+        }
+
+        if self.match_token(&TokenType::For) {
+            return self.for_statement();
+        }
+
+        if self.match_token(&TokenType::Break) {
+            self.consume(&TokenType::Semicolon, "Expected ';' after break")?;
+            return Ok(Statement::Break(BreakStatement {}));
+        }
+
+        if self.match_token(&TokenType::Continue) {
+            self.consume(&TokenType::Semicolon, "Expected ';' after continue")?;
+            return Ok(Statement::Continue(ContinueStatement {}));
+        }
+
         // Check for assignment vs expression statement
         // Look ahead: if we see "identifier = ", it's an assignment
         if let Some(token) = self.peek() {
@@ -203,6 +225,77 @@ impl Parser {
             condition,
             then_block,
             else_block,
+        }))
+    }
+
+    fn while_statement(&mut self) -> Result<Statement, String> {
+        // condition
+        let condition = self.expression()?;
+
+        // body
+        self.consume(&TokenType::LeftBrace, "Expected '{' after while condition")?;
+        let body = self.block()?;
+        self.consume(&TokenType::RightBrace, "Expected '}'")?;
+
+        Ok(Statement::While(WhileStatement {
+            condition,
+            body,
+        }))
+    }
+
+    fn loop_statement(&mut self) -> Result<Statement, String> {
+        // body
+        self.consume(&TokenType::LeftBrace, "Expected '{' after loop")?;
+        let body = self.block()?;
+        self.consume(&TokenType::RightBrace, "Expected '}'")?;
+
+        Ok(Statement::Loop(LoopStatement {
+            body,
+        }))
+    }
+
+    fn for_statement(&mut self) -> Result<Statement, String> {
+        // variable name
+        let variable = self.consume_identifier("Expected variable name in for loop")?;
+
+        // <- or 'in' (we use <- for Scala style)
+        if !self.match_token(&TokenType::LeftArrow) && !self.match_token(&TokenType::In) {
+            return Err("Expected '<-' or 'in' in for loop".to_string());
+        }
+
+        // Parse iterable (range or array)
+        let iterable = if self.match_token(&TokenType::LeftBracket) {
+            // Array literal: [1, 2, 3, 4]
+            let mut elements = Vec::new();
+
+            if !self.check(&TokenType::RightBracket) {
+                loop {
+                    elements.push(self.expression()?);
+                    if !self.match_token(&TokenType::Comma) {
+                        break;
+                    }
+                }
+            }
+
+            self.consume(&TokenType::RightBracket, "Expected ']' after array elements")?;
+            ForIterable::Array(elements)
+        } else {
+            // Range: start..end
+            let start = self.expression()?;
+            self.consume(&TokenType::DotDot, "Expected '..' for range")?;
+            let end = self.expression()?;
+            ForIterable::Range(Box::new(start), Box::new(end))
+        };
+
+        // body
+        self.consume(&TokenType::LeftBrace, "Expected '{' after for iterable")?;
+        let body = self.block()?;
+        self.consume(&TokenType::RightBrace, "Expected '}'")?;
+
+        Ok(Statement::For(ForStatement {
+            variable,
+            iterable,
+            body,
         }))
     }
 
