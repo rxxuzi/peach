@@ -9,8 +9,8 @@ use ast::Program;
 use parser::Parser;
 
 /// Parse tokens into AST
-pub fn parse(tokens: Vec<Token>) -> Result<Program, String> {
-    let parser = Parser::new(tokens);
+pub fn parse(tokens: Vec<Token>, source: String, filename: String) -> Result<Program, String> {
+    let parser = Parser::new(tokens, source, filename);
     parser.parse()
 }
 
@@ -28,7 +28,7 @@ def main() -> i32 {
 "#;
 
         let tokens = lexer::tokenize(source).unwrap();
-        let program = parse(tokens).unwrap();
+        let program = parse(tokens, source.to_string(), "test.peach".to_string()).unwrap();
 
         assert_eq!(program.functions.len(), 1);
         assert_eq!(program.functions[0].name, "main");

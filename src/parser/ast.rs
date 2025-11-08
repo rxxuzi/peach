@@ -14,7 +14,43 @@ impl Span {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Program {
+    pub structs: Vec<Struct>,
+    pub impls: Vec<Impl>,
     pub functions: Vec<Function>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Struct {
+    pub name: String,
+    pub fields: Vec<StructField>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct StructField {
+    pub name: String,
+    pub field_type: Type,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Impl {
+    pub struct_name: String,
+    pub methods: Vec<Method>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Method {
+    pub name: String,
+    pub self_param: Option<SelfParam>,  // None = associated function
+    pub parameters: Vec<Parameter>,
+    pub return_type: Type,
+    pub body: Block,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum SelfParam {
+    Owned,      // self (not implemented in v0.2.0)
+    Ref,        // &self
+    MutRef,     // &mut self
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -44,7 +80,8 @@ pub enum Type {
     F32,
     F64,
     Bool,
-    Void,  // New!
+    Void,
+    Struct(String),  // User-defined struct type
 }
 
 impl Type {
@@ -62,6 +99,7 @@ impl Type {
             Type::F64 => "f64".to_string(),
             Type::Bool => "bool".to_string(),
             Type::Void => "void".to_string(),
+            Type::Struct(name) => name.clone(),
         }
     }
 
@@ -79,6 +117,7 @@ impl Type {
             Type::F64 => "double".to_string(),
             Type::Bool => "bool".to_string(),
             Type::Void => "void".to_string(),
+            Type::Struct(name) => name.clone(),  // Struct types map directly to their name
         }
     }
 }
@@ -116,9 +155,16 @@ pub struct VarDeclStatement {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+pub enum AssignmentTarget {
+    Variable(String),
+    FieldAccess(FieldAccessExpression),
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub struct AssignmentStatement {
-    pub name: String,
+    pub target: AssignmentTarget,
     pub value: Expression,
+    pub span: Option<Span>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -135,8 +181,12 @@ pub enum Expression {
     BoolLiteral(bool),
     Variable(String),
     Binary(BinaryExpression),
-    Unary(UnaryExpression),      // New!
-    Call(CallExpression),         // New!
+    Unary(UnaryExpression),
+    Call(CallExpression),
+    FieldAccess(FieldAccessExpression),
+    MethodCall(MethodCallExpression),
+    AssociatedCall(AssociatedCallExpression),
+    StructLiteral(StructLiteralExpression),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -213,3 +263,41 @@ pub struct BreakStatement {}
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ContinueStatement {}
+
+// Struct/impl related expressions
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct FieldAccessExpression {
+    pub object: Box<Expression>,
+    pub field: String,
+    pub span: Option<Span>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct MethodCallExpression {
+    pub object: Box<Expression>,
+    pub method: String,
+    pub arguments: Vec<Expression>,
+    pub span: Option<Span>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct AssociatedCallExpression {
+    pub type_name: String,
+    pub function: String,
+    pub arguments: Vec<Expression>,
+    pub span: Option<Span>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct StructLiteralExpression {
+    pub struct_name: String,
+    pub fields: Vec<StructLiteralField>,
+    pub span: Option<Span>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct StructLiteralField {
+    pub name: String,
+    pub value: Expression,
+}

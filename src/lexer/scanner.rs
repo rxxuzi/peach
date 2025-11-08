@@ -56,7 +56,13 @@ impl Scanner {
             '}' => self.add_token(TokenType::RightBrace),
             '[' => self.add_token(TokenType::LeftBracket),
             ']' => self.add_token(TokenType::RightBracket),
-            ':' => self.add_token(TokenType::Colon),
+            ':' => {
+                if self.match_char(':') {
+                    self.add_token(TokenType::ColonColon);
+                } else {
+                    self.add_token(TokenType::Colon);
+                }
+            }
             ';' => self.add_token(TokenType::Semicolon),
             ',' => self.add_token(TokenType::Comma),
             '+' => self.add_token(TokenType::Plus),
@@ -96,7 +102,7 @@ impl Scanner {
                 if self.match_char('&') {
                     self.add_token(TokenType::AmpAmp);
                 } else {
-                    return Err(format!("Unexpected character '&' at line {}", self.line));
+                    self.add_token(TokenType::Amp);
                 }
             }
             '|' => {
@@ -128,10 +134,7 @@ impl Scanner {
                 if self.match_char('.') {
                     self.add_token(TokenType::DotDot);
                 } else {
-                    return Err(format!(
-                        "Unexpected character '.' at line {} column {}",
-                        self.line, self.column
-                    ));
+                    self.add_token(TokenType::Dot);
                 }
             }
             _ => {
@@ -187,6 +190,7 @@ impl Scanner {
             "return" => TokenType::Return,
             "val" => TokenType::Val,
             "var" => TokenType::Var,
+            "mut" => TokenType::Mut,
             "if" => TokenType::If,
             "else" => TokenType::Else,
             "while" => TokenType::While,
@@ -195,6 +199,9 @@ impl Scanner {
             "in" => TokenType::In,
             "break" => TokenType::Break,
             "continue" => TokenType::Continue,
+            "struct" => TokenType::Struct,
+            "impl" => TokenType::Impl,
+            "self" => TokenType::SelfKeyword,
             // Types
             "i8" => TokenType::I8,
             "i16" => TokenType::I16,

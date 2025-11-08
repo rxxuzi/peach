@@ -7,6 +7,7 @@ pub enum TokenType {
     Return,     // return
     Val,        // val
     Var,        // var
+    Mut,        // mut
     If,         // if
     Else,       // else
     While,      // while
@@ -15,6 +16,9 @@ pub enum TokenType {
     In,         // in
     Break,      // break
     Continue,   // continue
+    Struct,     // struct
+    Impl,       // impl
+    SelfKeyword, // self (lowercase)
 
     // Types
     I8,         // i8
@@ -58,6 +62,7 @@ pub enum TokenType {
     AmpAmp,         // &&
     PipePipe,       // ||
     Bang,           // !
+    Amp,            // & (for references)
 
     // Assignment
     Equal,          // =
@@ -72,6 +77,8 @@ pub enum TokenType {
     Arrow,          // ->
     LeftArrow,      // <-
     DotDot,         // ..
+    Dot,            // .
+    ColonColon,     // ::
     Colon,          // :
     Semicolon,      // ;
     Comma,          // ,

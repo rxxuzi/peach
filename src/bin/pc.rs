@@ -21,7 +21,7 @@ fn main() {
             process::exit(0);
         }
         Err(_) => {
-            // Error already reported by compile function
+            // Error message already printed by parser or semantic analyzer
             process::exit(1);
         }
     }
@@ -39,7 +39,8 @@ fn parse_args(args: &[String]) -> Result<(String, CompileOptions), String> {
         check_only: false,
         output_path: None,
         warnings: false,
-        use_build_dir: false,  // pc outputs to current directory
+        use_build_dir: true,   // pc uses build directory (tests/ -> tests/out/)
+        dry_run: false,
     };
 
     let mut i = 1;
@@ -63,6 +64,9 @@ fn parse_args(args: &[String]) -> Result<(String, CompileOptions), String> {
             }
             "-W" => {
                 options.warnings = true;
+            }
+            "-n" | "--dry-run" => {
+                options.dry_run = true;
             }
             "-o" => {
                 i += 1;
@@ -104,6 +108,7 @@ fn print_usage() {
     println!("  -o <file>        Specify output file (default: <input>.c)");
     println!("  -c               Check syntax and types only, don't generate code");
     println!("  -d, --debug      Show compilation progress");
+    println!("  -n, --dry-run    Print generated C code to stdout (don't write file)");
     println!("  -W               Enable warnings (placeholder for future)");
     println!("  -h, --help       Show this help message");
     println!("  -v, --version    Show compiler version");

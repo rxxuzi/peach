@@ -13,6 +13,33 @@ impl MessageFormatter {
         MessageFormatter { source, filename }
     }
 
+    /// Format error message and return as String (for parser errors)
+    pub fn format_error(filename: &str, source: &str, error: &CompileError) -> String {
+        let formatter = MessageFormatter::new(source.to_string(), filename.to_string());
+
+        let error_label = formatter.get_error_label(&error.error_type);
+        let mut result = String::new();
+
+        if let Some(span) = error.span {
+            // Format error header
+            result.push_str(&format!(
+                "{}:{}:{}: {}: {}\n",
+                filename,
+                span.line,
+                span.column,
+                error_label,
+                error.message
+            ));
+
+            // Add source context
+            result.push_str(&formatter.format_source_context(span));
+        } else {
+            result.push_str(&format!("{}: {}: {}", filename, error_label, error.message));
+        }
+
+        result
+    }
+
     /// Format and display error in GCC/G++ style
     pub fn report(&self, error: &CompileError) {
         let error_label = self.get_error_label(&error.error_type);
@@ -63,6 +90,61 @@ impl MessageFormatter {
             ErrorType::NameError => "error".red().bold(),
             ErrorType::GeneratorError => "error".red().bold(),
         }
+    }
+
+    fn format_source_context(&self, span: super::types::Span) -> String {
+        let lines: Vec<&str> = self.source.lines().collect();
+
+        if span.line == 0 || span.line > lines.len() {
+            return String::new();
+        }
+
+        let line_idx = span.line - 1;
+        let line_content = lines[line_idx];
+        let line_num_width = span.line.to_string().len().max(3);
+
+        let mut result = String::new();
+
+        // Previous line context
+        if line_idx > 0 {
+            result.push_str(&format!(
+                "{:>width$} | {}\n",
+                span.line - 1,
+                lines[line_idx - 1],
+                width = line_num_width
+            ));
+        }
+
+        // Error line
+        result.push_str(&format!(
+            "{:>width$} | {}\n",
+            span.line,
+            line_content,
+            width = line_num_width
+        ));
+
+        // Error indicator
+        let spaces = " ".repeat(span.column.saturating_sub(1));
+        let carets = self.get_error_highlight(line_content, span.column);
+        result.push_str(&format!(
+            "{:>width$} | {}{}\n",
+            " ",
+            spaces,
+            carets,
+            width = line_num_width
+        ));
+
+        // Next line context
+        if line_idx + 1 < lines.len() {
+            result.push_str(&format!(
+                "{:>width$} | {}\n",
+                span.line + 1,
+                lines[line_idx + 1],
+                width = line_num_width
+            ));
+        }
+
+        result
     }
 
     fn show_source_context(&self, span: super::types::Span) {

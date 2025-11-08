@@ -1,10 +1,15 @@
 // C code generator
 
 use crate::parser::ast::*;
+use std::collections::HashMap;
 
 pub struct CCodeGenerator {
     output: String,
     indent_level: usize,
+    // Type tracking for method calls
+    variable_types: HashMap<String, Type>,
+    struct_table: HashMap<String, Vec<StructField>>,
+    impl_table: HashMap<String, Vec<Method>>,
 }
 
 impl CCodeGenerator {
@@ -12,21 +17,148 @@ impl CCodeGenerator {
         CCodeGenerator {
             output: String::new(),
             indent_level: 0,
+            variable_types: HashMap::new(),
+            struct_table: HashMap::new(),
+            impl_table: HashMap::new(),
         }
     }
 
     pub fn generate(mut self, program: &Program) -> Result<String, String> {
+        // Build struct and impl tables for type tracking
+        for struct_def in &program.structs {
+            self.struct_table.insert(struct_def.name.clone(), struct_def.fields.clone());
+        }
+        for impl_block in &program.impls {
+            self.impl_table.insert(impl_block.struct_name.clone(), impl_block.methods.clone());
+        }
+
         // Headers
         self.emit_line("#include <stdint.h>");
         self.emit_line("#include <stdbool.h>");
         self.emit_line("");
+
+        // Struct definitions (typedef struct)
+        for struct_def in &program.structs {
+            self.generate_struct(struct_def)?;
+        }
+
+        // Method declarations (forward declarations)
+        for impl_block in &program.impls {
+            self.generate_method_declarations(&impl_block.struct_name, &impl_block.methods)?;
+        }
 
         // Functions
         for function in &program.functions {
             self.generate_function(function)?;
         }
 
+        // Method implementations
+        for impl_block in &program.impls {
+            self.generate_methods(&impl_block.struct_name, &impl_block.methods)?;
+        }
+
         Ok(self.output)
+    }
+
+    fn generate_struct(&mut self, struct_def: &Struct) -> Result<(), String> {
+        self.emit_line(&format!("typedef struct {{"));
+        self.indent();
+
+        for field in &struct_def.fields {
+            self.emit_line(&format!("{} {};", field.field_type.to_c_type(), field.name));
+        }
+
+        self.dedent();
+        self.emit_line(&format!("}} {};", struct_def.name));
+        self.emit_line("");
+
+        Ok(())
+    }
+
+    fn generate_method_declarations(&mut self, struct_name: &str, methods: &[Method]) -> Result<(), String> {
+        for method in methods {
+            let return_type = method.return_type.to_c_type();
+            let mut signature = format!("{} {}_{}(", return_type, struct_name, method.name);
+
+            let mut params = Vec::new();
+
+            // Add self parameter if present
+            if let Some(ref self_param) = method.self_param {
+                match self_param {
+                    SelfParam::Ref => params.push(format!("const {}* self", struct_name)),
+                    SelfParam::MutRef => params.push(format!("{}* self", struct_name)),
+                    SelfParam::Owned => return Err("Owned self parameter not supported in v0.2.0".to_string()),
+                }
+            }
+
+            // Add regular parameters
+            for param in &method.parameters {
+                params.push(format!("{} {}", param.param_type.to_c_type(), param.name));
+            }
+
+            if params.is_empty() {
+                signature.push_str("void");
+            } else {
+                signature.push_str(&params.join(", "));
+            }
+
+            signature.push_str(");");
+            self.emit_line(&signature);
+        }
+
+        self.emit_line("");
+        Ok(())
+    }
+
+    fn generate_methods(&mut self, struct_name: &str, methods: &[Method]) -> Result<(), String> {
+        for method in methods {
+            self.generate_method(struct_name, method)?;
+        }
+        Ok(())
+    }
+
+    fn generate_method(&mut self, struct_name: &str, method: &Method) -> Result<(), String> {
+        let return_type = method.return_type.to_c_type();
+        let mut signature = format!("{} {}_{}(", return_type, struct_name, method.name);
+
+        let mut params = Vec::new();
+
+        // Add self parameter if present
+        if let Some(ref self_param) = method.self_param {
+            match self_param {
+                SelfParam::Ref => params.push(format!("const {}* self", struct_name)),
+                SelfParam::MutRef => params.push(format!("{}* self", struct_name)),
+                SelfParam::Owned => return Err("Owned self parameter not supported in v0.2.0".to_string()),
+            }
+        }
+
+        // Add regular parameters
+        for param in &method.parameters {
+            params.push(format!("{} {}", param.param_type.to_c_type(), param.name));
+        }
+
+        if params.is_empty() {
+            signature.push_str("void");
+        } else {
+            signature.push_str(&params.join(", "));
+        }
+
+        signature.push(')');
+        self.emit_line(&signature);
+
+        // Method body
+        self.emit_line("{");
+        self.indent();
+
+        for statement in &method.body.statements {
+            self.generate_statement(statement)?;
+        }
+
+        self.dedent();
+        self.emit_line("}");
+        self.emit_line("");
+
+        Ok(())
     }
 
     fn generate_function(&mut self, function: &Function) -> Result<(), String> {
@@ -75,14 +207,19 @@ impl CCodeGenerator {
                 let const_keyword = if var_decl.is_mutable { "" } else { "const " };
 
                 // Type is now guaranteed to be present after semantic analysis
-                let c_type = if let Some(ref var_type) = var_decl.var_type {
-                    var_type.to_c_type()
+                let var_type = if let Some(ref var_type) = var_decl.var_type {
+                    var_type.clone()
                 } else {
                     return Err(format!(
                         "Internal error: Variable '{}' has no type after semantic analysis",
                         var_decl.name
                     ));
                 };
+
+                // Track variable type for method calls
+                self.variable_types.insert(var_decl.name.clone(), var_type.clone());
+
+                let c_type = var_type.to_c_type();
 
                 // Generate declaration
                 let mut line = format!("{}{} {}", const_keyword, c_type, var_decl.name);
@@ -97,7 +234,20 @@ impl CCodeGenerator {
             }
             Statement::Assignment(assignment) => {
                 let value_code = self.expression_to_c(&assignment.value);
-                self.emit_line(&format!("{} = {};", assignment.name, value_code));
+                let target_code = match &assignment.target {
+                    AssignmentTarget::Variable(name) => name.clone(),
+                    AssignmentTarget::FieldAccess(field_access) => {
+                        let object = self.expression_to_c(&field_access.object);
+                        // Use -> for self (pointer), . for regular variables
+                        let accessor = if matches!(&*field_access.object, Expression::Variable(name) if name == "self") {
+                            "->"
+                        } else {
+                            "."
+                        };
+                        format!("{}{}{}", object, accessor, field_access.field)
+                    }
+                };
+                self.emit_line(&format!("{} = {};", target_code, value_code));
             }
             Statement::If(if_stmt) => {
                 let condition = self.expression_to_c(&if_stmt.condition);
@@ -265,6 +415,54 @@ impl CCodeGenerator {
                     .collect();
                 format!("{}({})", call.callee, args.join(", "))
             }
+
+            Expression::FieldAccess(field_access) => {
+                let object = self.expression_to_c(&field_access.object);
+                // Determine if we need . or ->
+                // If the object is 'self' (in a method), it's always a pointer, so use ->
+                let accessor = if matches!(&*field_access.object, Expression::Variable(name) if name == "self") {
+                    "->"
+                } else {
+                    "."
+                };
+                format!("{}{}{}", object, accessor, field_access.field)
+            }
+
+            Expression::MethodCall(method_call) => {
+                // Get the object expression
+                let object_expr = self.expression_to_c(&method_call.object);
+
+                // Infer the type of the object
+                let struct_name = self.infer_expression_type_name(&method_call.object);
+
+                // Generate method arguments
+                let mut args = vec![format!("&{}", object_expr)];  // Pass object as pointer
+                for arg in &method_call.arguments {
+                    args.push(self.expression_to_c(arg));
+                }
+
+                // Generate: StructName_methodName(&object, args...)
+                format!("{}_{}({})",
+                    struct_name.unwrap_or_else(|| "Unknown".to_string()),
+                    method_call.method,
+                    args.join(", ")
+                )
+            }
+
+            Expression::AssociatedCall(assoc_call) => {
+                let args: Vec<String> = assoc_call.arguments.iter()
+                    .map(|arg| self.expression_to_c(arg))
+                    .collect();
+                format!("{}_{}({})", assoc_call.type_name, assoc_call.function, args.join(", "))
+            }
+
+            Expression::StructLiteral(struct_literal) => {
+                // Generate C struct initializer
+                let fields: Vec<String> = struct_literal.fields.iter()
+                    .map(|f| format!(".{} = {}", f.name, self.expression_to_c(&f.value)))
+                    .collect();
+                format!("({}){{{}}}", struct_literal.struct_name, fields.join(", "))
+            }
         }
     }
 
@@ -283,6 +481,55 @@ impl CCodeGenerator {
     fn dedent(&mut self) {
         if self.indent_level > 0 {
             self.indent_level -= 1;
+        }
+    }
+
+    /// Infer the struct type name from an expression
+    fn infer_expression_type_name(&self, expr: &Expression) -> Option<String> {
+        match expr {
+            Expression::Variable(name) => {
+                // Look up the variable's type
+                if let Some(var_type) = self.variable_types.get(name) {
+                    match var_type {
+                        Type::Struct(struct_name) => Some(struct_name.clone()),
+                        _ => None,
+                    }
+                } else {
+                    None
+                }
+            }
+            Expression::StructLiteral(struct_lit) => {
+                Some(struct_lit.struct_name.clone())
+            }
+            Expression::FieldAccess(field_access) => {
+                // Get the type of the object, then look up the field type
+                if let Some(struct_name) = self.infer_expression_type_name(&field_access.object) {
+                    if let Some(fields) = self.struct_table.get(&struct_name) {
+                        if let Some(field) = fields.iter().find(|f| f.name == field_access.field) {
+                            match &field.field_type {
+                                Type::Struct(name) => Some(name.clone()),
+                                _ => None,
+                            }
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            }
+            Expression::MethodCall(_method_call) => {
+                // Method calls return values - would need full type inference
+                // For now, not supported in method chains
+                None
+            }
+            Expression::Call(_) | Expression::AssociatedCall(_) => {
+                // Would need to look up function return types
+                None
+            }
+            _ => None,
         }
     }
 }

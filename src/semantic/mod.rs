@@ -5,27 +5,20 @@ pub mod type_checker;
 
 use crate::parser::ast::Program;
 use crate::helper::types::CompileError;
-use crate::helper::msg::MessageFormatter;
 use type_checker::TypeChecker;
 
 /// Perform semantic analysis on the AST with error reporting
-pub fn analyze(program: &mut Program, source: &str, filename: &str) -> Result<(), CompileError> {
-    let formatter = MessageFormatter::new(source.to_string(), filename.to_string());
-    let mut type_checker = TypeChecker::new();
+pub fn analyze(program: &mut Program, _source: &str, filename: &str) -> Result<(), CompileError> {
+    let mut type_checker = TypeChecker::new(filename.to_string());
 
     let result = type_checker.check_program(program);
 
     // Report all errors
     let errors = type_checker.get_errors();
     if !errors.is_empty() {
-        // Report each error
+        // Print each error (they already have line numbers embedded)
         for error_msg in errors {
-            let compile_error = CompileError::new(
-                error_msg.clone(),
-                None,
-                crate::helper::types::ErrorType::TypeError
-            );
-            formatter.report(&compile_error);
+            eprintln!("{}", error_msg);
         }
 
         // Return the first error

@@ -24,8 +24,10 @@ pub struct CompileOptions {
     pub output_path: Option<String>,
     /// Show warnings (placeholder for future)
     pub warnings: bool,
-    /// Use build/ directory for output
+    /// Use build/ directory for output (tests/ files go to tests/out/)
     pub use_build_dir: bool,
+    /// Dry run: print generated code to stdout without writing to file
+    pub dry_run: bool,
 }
 
 impl Default for CompileOptions {
@@ -36,6 +38,7 @@ impl Default for CompileOptions {
             output_path: None,
             warnings: false,
             use_build_dir: true,
+            dry_run: false,
         }
     }
 }
@@ -78,15 +81,10 @@ pub fn compile_with_options(input_file: &str, options: CompileOptions) -> Result
     if options.verbose {
         println!("[2/4] Parsing...");
     }
-    let mut ast = match parser::parse(tokens) {
+    let mut ast = match parser::parse(tokens, source.clone(), input_file.to_string()) {
         Ok(ast) => ast,
         Err(e) => {
-            let error = helper::CompileError::new(
-                e.clone(),
-                None,
-                helper::ErrorType::ParseError
-            );
-            formatter.report(&error);
+            // Error message is already formatted by parser
             return Err(e);
         }
     };
@@ -120,20 +118,29 @@ pub fn compile_with_options(input_file: &str, options: CompileOptions) -> Result
     }
     let c_code = generator::generate(&ast)?;
 
-    // Write output
-    let output_file = if let Some(ref custom_path) = options.output_path {
-        custom_path.clone()
-    } else if options.use_build_dir {
-        get_output_path_build(input_file)
+    // Write output or print to stdout
+    if options.dry_run {
+        // Dry run: print to stdout
+        println!("{}", c_code);
+        if options.verbose {
+            eprintln!("  ✓ Dry run complete (no files written)");
+        }
     } else {
-        get_output_path_current(input_file)
-    };
+        // Normal: write to file
+        let output_file = if let Some(ref custom_path) = options.output_path {
+            custom_path.clone()
+        } else if options.use_build_dir {
+            get_output_path_build(input_file)
+        } else {
+            get_output_path_current(input_file)
+        };
 
-    write_file(&output_file, &c_code)
-        .map_err(|e| format!("Failed to write file '{}': {}", output_file, e))?;
+        write_file(&output_file, &c_code)
+            .map_err(|e| format!("Failed to write file '{}': {}", output_file, e))?;
 
-    if options.verbose {
-        println!("  ✓ Generated: {}", output_file);
+        if options.verbose {
+            println!("  ✓ Generated: {}", output_file);
+        }
     }
 
     Ok(())
@@ -154,7 +161,13 @@ fn write_file(path: &str, content: &str) -> io::Result<()> {
 fn get_output_path_build(input_file: &str) -> String {
     let path = Path::new(input_file);
     let stem = path.file_stem().unwrap().to_str().unwrap();
-    format!("build/{}.c", stem)
+
+    // If input is from tests/ directory, output to tests/out/
+    if input_file.starts_with("tests/") || input_file.starts_with("tests\\") {
+        format!("tests/out/{}.c", stem)
+    } else {
+        format!("build/{}.c", stem)
+    }
 }
 
 fn get_output_path_current(input_file: &str) -> String {
