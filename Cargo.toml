@@ -1,0 +1,16 @@
+[package]
+name = "peach"
+version = "0.1.0"
+authors = ["rxxuzi"]
+edition = "2024"
+description = "Peach programming language"
+repository = "https://github.com/rxxuzi/peach"
+license = "MIT"
+
+[dependencies]
+clap = { version = "4.4", features = ["derive"] }
+colored = "2.0"
+
+[[bin]]
+name = "peach"
+path = "src/main.rs"
