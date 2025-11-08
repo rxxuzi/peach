@@ -1,6 +1,6 @@
 [package]
 name = "peach"
-version = "0.1.0"
+version = "0.1.1"
 authors = ["rxxuzi"]
 edition = "2024"
 description = "Peach programming language"
@@ -14,3 +14,7 @@ colored = "2.0"
 [[bin]]
 name = "peach"
 path = "src/main.rs"
+
+[[bin]]
+name = "pc"
+path = "src/bin/pc.rs"
