@@ -43,6 +43,7 @@ impl CCodeGenerator {
         self.emit_line("#include <stdlib.h>");
         self.emit_line("#include <stdint.h>");
         self.emit_line("#include <stdbool.h>");
+        self.emit_line("#include <string.h>");  // For memcpy (copy! macro)
         self.emit_line("");
 
         // Generate slice struct definitions for array parameters
@@ -271,12 +272,19 @@ impl CCodeGenerator {
 
                 // Special handling for array types
                 match &var_type {
-                    Type::Array { element_type, size } => {
-                        if let Some(n) = size {
-                            // Fixed-size array: int32_t arr[5]
-                            let elem_c_type = element_type.to_c_type();
-                            let size_str = format!("[{}]", n);
-                            let mut line = format!("{}{} {}{}", const_keyword, elem_c_type, var_decl.name, size_str);
+                    Type::Array { element_type: _, size } => {
+                        if let Some(_) = size {
+                            // Fixed-size array (possibly multi-dimensional): int32_t arr[2][3]
+                            let (dimensions, base_type) = self.collect_array_dimensions(&var_type);
+                            let base_c_type = base_type.to_c_type();
+
+                            // Build dimension string: [2][3][4]
+                            let dimensions_str: String = dimensions.iter()
+                                .map(|d| format!("[{}]", d))
+                                .collect::<Vec<_>>()
+                                .join("");
+
+                            let mut line = format!("{}{} {}{}", const_keyword, base_c_type, var_decl.name, dimensions_str);
 
                             if let Some(ref init) = var_decl.initializer {
                                 line.push_str(" = ");
@@ -666,24 +674,60 @@ impl CCodeGenerator {
                         }
                     }
                     Expression::ArrayLiteral(array_lit) => {
-                        // &[1, 2, 3]
+                        // &[1, 2, 3] or &[[1,2],[3,4]]
                         // Need to infer element type
                         if let Some(first_elem) = array_lit.elements.first() {
                             if let Some(elem_type) = self.infer_expression_type(first_elem) {
-                                let slice_type = format!("Slice_{}", elem_type.to_c_type().replace("*", "ptr").replace(" ", "_"));
                                 let len = array_lit.elements.len();
                                 // Create temporary array
                                 let elements_str: Vec<String> = array_lit.elements.iter()
                                     .map(|e| self.expression_to_c(e))
                                     .collect();
-                                // For now, create compound literal
-                                let array_literal = format!("({}[]){{ {} }}", elem_type.to_c_type(), elements_str.join(", "));
-                                format!("({}){{.data = {}, .length = {}}}", slice_type, array_literal, len)
+
+                                // Handle multi-dimensional arrays properly
+                                match &elem_type {
+                                    Type::Array { element_type: inner_elem, size: Some(inner_size) } => {
+                                        // Multi-dimensional: &[[1,2],[3,4]]
+                                        // elem_type is [2]i32, need to create Slice of [2]i32
+                                        // Get the base type for the slice struct name
+                                        let base_type = inner_elem.to_c_type();
+                                        let slice_type = format!("Slice_{}", base_type.replace("*", "ptr").replace(" ", "_"));
+                                        // C array type: int32_t[2]
+                                        let c_array_elem_type = format!("{}[{}]", base_type, inner_size);
+                                        let array_literal = format!("({}[]){{ {} }}", c_array_elem_type, elements_str.join(", "));
+                                        format!("({}){{.data = {}, .length = {}}}", slice_type, array_literal, len)
+                                    }
+                                    _ => {
+                                        // 1D array: &[1, 2, 3]
+                                        let slice_type = format!("Slice_{}", elem_type.to_c_type().replace("*", "ptr").replace(" ", "_"));
+                                        let array_literal = format!("({}[]){{ {} }}", elem_type.to_c_type(), elements_str.join(", "));
+                                        format!("({}){{.data = {}, .length = {}}}", slice_type, array_literal, len)
+                                    }
+                                }
                             } else {
                                 "/* cannot infer array element type */".to_string()
                             }
                         } else {
                             "/* empty array literal */".to_string()
+                        }
+                    }
+                    Expression::Index(_) => {
+                        // &matrix[i] where matrix: [N][M]T → creates slice of [M]T
+                        // Need to infer the type of the indexed expression
+                        if let Some(indexed_type) = self.infer_expression_type(&ref_expr.inner) {
+                            match indexed_type {
+                                Type::Array { element_type, size: Some(n) } => {
+                                    // indexed_type is [N]T, create slice []T
+                                    let slice_type = format!("Slice_{}", element_type.to_c_type().replace("*", "ptr").replace(" ", "_"));
+                                    let index_c = self.expression_to_c(&ref_expr.inner);
+                                    format!("({}){{.data = {}, .length = {}}}", slice_type, index_c, n)
+                                }
+                                _ => {
+                                    format!("/* cannot create slice from indexed expression */")
+                                }
+                            }
+                        } else {
+                            format!("/* cannot infer type of indexed expression */")
                         }
                     }
                     _ => {
@@ -700,6 +744,31 @@ impl CCodeGenerator {
         }
         self.output.push_str(line);
         self.output.push('\n');
+    }
+
+    /// Collect all dimensions from a multi-dimensional array type
+    /// Returns (dimensions, base_element_type)
+    /// Example: [2][3][4]i32 -> ([2, 3, 4], i32)
+    fn collect_array_dimensions(&self, ty: &Type) -> (Vec<usize>, Type) {
+        let mut dimensions = vec![];
+        let mut current = ty;
+
+        loop {
+            match current {
+                Type::Array { element_type, size } => {
+                    if let Some(s) = size {
+                        dimensions.push(*s);
+                        current = element_type;
+                    } else {
+                        // Slice type - stop collecting
+                        break;
+                    }
+                }
+                _ => break,
+            }
+        }
+
+        (dimensions, current.clone())
     }
 
     fn indent(&mut self) {

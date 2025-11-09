@@ -815,7 +815,8 @@ impl Parser {
 
         // Reference operator (&) for creating slices
         if self.match_token(&TokenType::Amp) {
-            let inner = self.primary()?;
+            // Use postfix() to support &matrix[0] syntax (indexing after reference)
+            let inner = self.postfix()?;
             return Ok(Expression::Reference(ReferenceExpression {
                 inner: Box::new(inner),
                 span: self.current_span(),

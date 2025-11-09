@@ -931,6 +931,46 @@ impl TypeChecker {
                         }
                         Ok(Type::String)
                     }
+                    "len" => {
+                        // len!(arr) returns i32 - length of array
+                        if macro_call.arguments.len() != 1 {
+                            let msg = format!("len! macro expects exactly 1 argument, got {}", macro_call.arguments.len());
+                            return Err(self.error_with_span(msg, macro_call.span.clone()));
+                        }
+                        let arg_type = self.infer_expression_type(&macro_call.arguments[0])?;
+                        match arg_type {
+                            Type::Array { .. } => Ok(Type::I32),
+                            _ => {
+                                let msg = format!("len! macro expects array argument, got '{}'", arg_type.to_string());
+                                Err(self.error_with_span(msg, macro_call.span.clone()))
+                            }
+                        }
+                    }
+                    "copy" => {
+                        // copy!(dst, src) - copy array contents
+                        if macro_call.arguments.len() != 2 {
+                            let msg = format!("copy! macro expects exactly 2 arguments, got {}", macro_call.arguments.len());
+                            return Err(self.error_with_span(msg, macro_call.span.clone()));
+                        }
+                        let dst_type = self.infer_expression_type(&macro_call.arguments[0])?;
+                        let src_type = self.infer_expression_type(&macro_call.arguments[1])?;
+
+                        // Both must be arrays of the same type
+                        match (&dst_type, &src_type) {
+                            (Type::Array { .. }, Type::Array { .. }) => {
+                                if !self.types_match(&dst_type, &src_type) {
+                                    let msg = format!("copy! macro: type mismatch between dst ('{}') and src ('{}')",
+                                        dst_type.to_string(), src_type.to_string());
+                                    return Err(self.error_with_span(msg, macro_call.span.clone()));
+                                }
+                                Ok(Type::Void)
+                            }
+                            _ => {
+                                let msg = "copy! macro expects array arguments".to_string();
+                                Err(self.error_with_span(msg, macro_call.span.clone()))
+                            }
+                        }
+                    }
                     _ => {
                         let msg = format!("Unknown builtin macro '{}'", macro_call.macro_name);
                         Err(self.error_with_span(msg, macro_call.span.clone()))

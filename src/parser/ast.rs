@@ -87,6 +87,10 @@ pub enum Type {
         element_type: Box<Type>,
         size: Option<usize>,  // None for size inference: []i32, Some(5) for [5]i32
     },
+    Reference {
+        inner: Box<Type>,
+        is_mutable: bool,  // false for &[]T, true for &mut []T
+    },
 }
 
 impl Type {
@@ -111,6 +115,13 @@ impl Type {
                     format!("[{}]{}", n, element_type.to_string())
                 } else {
                     format!("[]{}", element_type.to_string())
+                }
+            }
+            Type::Reference { inner, is_mutable } => {
+                if *is_mutable {
+                    format!("&mut {}", inner.to_string())
+                } else {
+                    format!("&{}", inner.to_string())
                 }
             }
         }
@@ -140,8 +151,23 @@ impl Type {
                         element_type.to_c_type()
                     }
                     None => {
-                        // Unsized array (slice): Slice_int32_t
+                        // Size-inference array ([]i32 in source becomes [N]i32 after inference)
+                        // Should not reach here in normal code generation
+                        element_type.to_c_type()
+                    }
+                }
+            }
+            Type::Reference { inner, is_mutable: _ } => {
+                // Reference types (slices): &[]T or &mut []T
+                // Both map to Slice_T struct in C
+                match &**inner {
+                    Type::Array { element_type, size: None } => {
+                        // &[]T or &mut []T -> Slice_T
                         format!("Slice_{}", element_type.to_c_type().replace("*", "ptr").replace(" ", "_"))
+                    }
+                    _ => {
+                        // Other reference types not yet supported
+                        format!("/* unsupported reference type: {} */", inner.to_string())
                     }
                 }
             }

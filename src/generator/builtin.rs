@@ -15,6 +15,8 @@ impl BuiltinMacroGenerator {
             "println" => Self::generate_println(macro_call, expression_to_c, infer_type),
             "panic" => Self::generate_panic(macro_call, expression_to_c, infer_type),
             "format" => Self::generate_format(macro_call, expression_to_c, infer_type),
+            "len" => Self::generate_len(macro_call, expression_to_c, infer_type),
+            "copy" => Self::generate_copy(macro_call, expression_to_c, infer_type),
             _ => format!("/* Unknown macro: {} */", macro_call.macro_name),
         }
     }
@@ -137,6 +139,71 @@ impl BuiltinMacroGenerator {
         // format!(...) - For v0.2.1, just return empty string
         // TODO: Implement proper format string handling with string allocation
         "\"\"".to_string()
+    }
+
+    fn generate_len(
+        macro_call: &MacroCallExpression,
+        expression_to_c: &dyn Fn(&Expression) -> String,
+        infer_type: &dyn Fn(&Expression) -> Option<Type>,
+    ) -> String {
+        // len!(arr) → returns array length as i32
+        // For fixed arrays: return compile-time size
+        // For slices: return slice.length
+        if macro_call.arguments.is_empty() {
+            return "0".to_string();
+        }
+
+        let arg = &macro_call.arguments[0];
+        if let Some(ty) = infer_type(arg) {
+            match ty {
+                Type::Array { size: Some(n), .. } => {
+                    // Fixed-size array: return compile-time size
+                    format!("{}", n)
+                }
+                Type::Array { size: None, .. } => {
+                    // Slice: return .length field
+                    let arg_c = expression_to_c(arg);
+                    format!("((int32_t)({}.length))", arg_c)
+                }
+                _ => "0".to_string(),
+            }
+        } else {
+            "0".to_string()
+        }
+    }
+
+    fn generate_copy(
+        macro_call: &MacroCallExpression,
+        expression_to_c: &dyn Fn(&Expression) -> String,
+        infer_type: &dyn Fn(&Expression) -> Option<Type>,
+    ) -> String {
+        // copy!(dst, src) → memcpy(dst, src, sizeof(src))
+        if macro_call.arguments.len() != 2 {
+            return "/* copy! expects 2 arguments */".to_string();
+        }
+
+        let dst = &macro_call.arguments[0];
+        let src = &macro_call.arguments[1];
+
+        let dst_c = expression_to_c(dst);
+        let src_c = expression_to_c(src);
+
+        // Get the type to determine size
+        if let Some(ty) = infer_type(src) {
+            match ty {
+                Type::Array { element_type: _, size: Some(_) } => {
+                    // Fixed-size array - use memcpy
+                    // Use sizeof to get array size dynamically
+                    format!("memcpy({}, {}, sizeof({}))", dst_c, src_c, src_c)
+                }
+                _ => {
+                    // For slices or other types, generate error comment
+                    "/* copy! currently only supports fixed-size arrays */".to_string()
+                }
+            }
+        } else {
+            "/* copy! type inference failed */".to_string()
+        }
     }
 
     /// Get the appropriate printf format specifier for a type
