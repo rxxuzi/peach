@@ -132,9 +132,18 @@ impl Type {
             Type::Void => "void".to_string(),
             Type::String => "char*".to_string(),
             Type::Struct(name) => name.clone(),  // Struct types map directly to their name
-            Type::Array { element_type, .. } => {
-                // Arrays are represented as slice structs in C: Slice_<type>
-                format!("Slice_{}", element_type.to_c_type().replace("*", "ptr"))
+            Type::Array { element_type, size } => {
+                match size {
+                    Some(_) => {
+                        // Fixed-size arrays return just element type
+                        // The size is handled separately in variable/parameter generation
+                        element_type.to_c_type()
+                    }
+                    None => {
+                        // Unsized array (slice): Slice_int32_t
+                        format!("Slice_{}", element_type.to_c_type().replace("*", "ptr").replace(" ", "_"))
+                    }
+                }
             }
         }
     }
@@ -210,6 +219,7 @@ pub enum Expression {
     MacroCall(MacroCallExpression),
     ArrayLiteral(ArrayLiteralExpression),
     Index(IndexExpression),
+    Reference(ReferenceExpression),  // &expr for creating slices
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -278,7 +288,7 @@ pub struct ForStatement {
 #[derive(Debug, Clone, PartialEq)]
 pub enum ForIterable {
     Range(Box<Expression>, Box<Expression>),  // start..end
-    Array(Vec<Expression>),  // [1, 2, 3, 4]
+    Expression(Box<Expression>),  // Array literal, array variable, or any array expression
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -342,5 +352,11 @@ pub struct ArrayLiteralExpression {
 pub struct IndexExpression {
     pub array: Box<Expression>,
     pub index: Box<Expression>,
+    pub span: Option<Span>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ReferenceExpression {
+    pub inner: Box<Expression>,  // &expr
     pub span: Option<Span>,
 }

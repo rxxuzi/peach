@@ -10,6 +10,7 @@ pub struct CCodeGenerator {
     variable_types: HashMap<String, Type>,
     struct_table: HashMap<String, Vec<StructField>>,
     impl_table: HashMap<String, Vec<Method>>,
+    function_table: HashMap<String, Vec<Parameter>>,
 }
 
 impl CCodeGenerator {
@@ -20,6 +21,7 @@ impl CCodeGenerator {
             variable_types: HashMap::new(),
             struct_table: HashMap::new(),
             impl_table: HashMap::new(),
+            function_table: HashMap::new(),
         }
     }
 
@@ -31,6 +33,10 @@ impl CCodeGenerator {
         for impl_block in &program.impls {
             self.impl_table.insert(impl_block.struct_name.clone(), impl_block.methods.clone());
         }
+        // Build function table for call-site array-to-slice conversion
+        for function in &program.functions {
+            self.function_table.insert(function.name.clone(), function.parameters.clone());
+        }
 
         // Headers
         self.emit_line("#include <stdio.h>");
@@ -38,6 +44,9 @@ impl CCodeGenerator {
         self.emit_line("#include <stdint.h>");
         self.emit_line("#include <stdbool.h>");
         self.emit_line("");
+
+        // Generate slice struct definitions for array parameters
+        self.generate_slice_structs(program)?;
 
         // Struct definitions (typedef struct)
         for struct_def in &program.structs {
@@ -60,6 +69,37 @@ impl CCodeGenerator {
         }
 
         Ok(self.output)
+    }
+
+    /// Collect all unsized array types used in function parameters and generate slice structs
+    fn generate_slice_structs(&mut self, program: &Program) -> Result<(), String> {
+        use std::collections::HashSet;
+        let mut slice_types = HashSet::new();
+
+        // Collect slice types from function parameters
+        for function in &program.functions {
+            for param in &function.parameters {
+                if let Type::Array { size: None, element_type } = &param.param_type {
+                    // Unsized array - need slice struct
+                    slice_types.insert(element_type.to_c_type());
+                }
+            }
+        }
+
+        // Generate slice struct for each type
+        for elem_type in slice_types {
+            // Generate: typedef struct { T* data; size_t length; } Slice_T;
+            let struct_name = format!("Slice_{}", elem_type.replace("*", "ptr").replace(" ", "_"));
+            self.emit_line(&format!("typedef struct {{"));
+            self.indent();
+            self.emit_line(&format!("{}* data;", elem_type));
+            self.emit_line("size_t length;");
+            self.dedent();
+            self.emit_line(&format!("}} {};", struct_name));
+            self.emit_line("");
+        }
+
+        Ok(())
     }
 
     fn generate_struct(&mut self, struct_def: &Struct) -> Result<(), String> {
@@ -164,6 +204,14 @@ impl CCodeGenerator {
     }
 
     fn generate_function(&mut self, function: &Function) -> Result<(), String> {
+        // Clear variable types for new function scope
+        self.variable_types.clear();
+
+        // Add function parameters to variable types for slice handling
+        for param in &function.parameters {
+            self.variable_types.insert(param.name.clone(), param.param_type.clone());
+        }
+
         // Function signature
         let return_type = function.return_type.to_c_type();
         let mut signature = format!("{} {}(", return_type, function.name);
@@ -224,27 +272,32 @@ impl CCodeGenerator {
                 // Special handling for array types
                 match &var_type {
                     Type::Array { element_type, size } => {
-                        // Generate C array declaration
-                        let elem_c_type = element_type.to_c_type();
-                        let size_str = if let Some(n) = size {
-                            format!("[{}]", n)
+                        if let Some(n) = size {
+                            // Fixed-size array: int32_t arr[5]
+                            let elem_c_type = element_type.to_c_type();
+                            let size_str = format!("[{}]", n);
+                            let mut line = format!("{}{} {}{}", const_keyword, elem_c_type, var_decl.name, size_str);
+
+                            if let Some(ref init) = var_decl.initializer {
+                                line.push_str(" = ");
+                                line.push_str(&self.expression_to_c(init));
+                            }
+
+                            line.push(';');
+                            self.emit_line(&line);
                         } else {
-                            // Size should have been inferred by semantic analysis
-                            return Err(format!(
-                                "Internal error: Array '{}' has no size after semantic analysis",
-                                var_decl.name
-                            ));
-                        };
+                            // Slice: Slice_int32_t arr
+                            let c_type = var_type.to_c_type();  // Returns Slice_int32_t
+                            let mut line = format!("{}{} {}", const_keyword, c_type, var_decl.name);
 
-                        let mut line = format!("{}{} {}{}", const_keyword, elem_c_type, var_decl.name, size_str);
+                            if let Some(ref init) = var_decl.initializer {
+                                line.push_str(" = ");
+                                line.push_str(&self.expression_to_c(init));
+                            }
 
-                        if let Some(ref init) = var_decl.initializer {
-                            line.push_str(" = ");
-                            line.push_str(&self.expression_to_c(init));
+                            line.push(';');
+                            self.emit_line(&line);
                         }
-
-                        line.push(';');
-                        self.emit_line(&line);
                     }
                     _ => {
                         // Regular variable declaration
@@ -358,36 +411,69 @@ impl CCodeGenerator {
                         self.dedent();
                         self.emit_line("}");
                     }
-                    ForIterable::Array(elements) => {
-                        // Generate array literal and iterate
+                    ForIterable::Expression(expr) => {
+                        // Get array expression and its type
                         let var = &for_stmt.variable;
-                        let array_name = format!("__array_{}", var);
-                        let len = elements.len();
 
-                        // Declare and initialize array
-                        let elem_strings: Vec<String> = elements.iter()
-                            .map(|e| self.expression_to_c(e))
-                            .collect();
+                        match &**expr {
+                            Expression::ArrayLiteral(array_lit) => {
+                                // Array literal: create temporary array
+                                let array_name = format!("__array_{}", var);
+                                let len = array_lit.elements.len();
 
-                        self.emit_line(&format!(
-                            "int32_t {}[] = {{{}}};",
-                            array_name,
-                            elem_strings.join(", ")
-                        ));
+                                // Declare and initialize array
+                                let elem_strings: Vec<String> = array_lit.elements.iter()
+                                    .map(|e| self.expression_to_c(e))
+                                    .collect();
 
-                        // Iterate over array
-                        self.emit_line(&format!(
-                            "for (size_t __i_{} = 0; __i_{} < {}; __i_{}++)",
-                            var, var, len, var
-                        ));
-                        self.emit_line("{");
-                        self.indent();
+                                self.emit_line(&format!(
+                                    "int32_t {}[] = {{{}}};",
+                                    array_name,
+                                    elem_strings.join(", ")
+                                ));
 
-                        // Declare loop variable
-                        self.emit_line(&format!(
-                            "int32_t {} = {}[__i_{}];",
-                            var, array_name, var
-                        ));
+                                // Iterate over array
+                                self.emit_line(&format!(
+                                    "for (size_t __i_{} = 0; __i_{} < {}; __i_{}++)",
+                                    var, var, len, var
+                                ));
+                                self.emit_line("{");
+                                self.indent();
+
+                                // Declare loop variable
+                                self.emit_line(&format!(
+                                    "int32_t {} = {}[__i_{}];",
+                                    var, array_name, var
+                                ));
+                            }
+                            Expression::Variable(array_var) => {
+                                // Array variable: use existing variable
+                                // Get array size from variable type
+                                let array_size = if let Some(Type::Array { size: Some(n), element_type }) = self.variable_types.get(array_var) {
+                                    let elem_c_type = element_type.to_c_type();
+                                    (*n, elem_c_type)
+                                } else {
+                                    return Err(format!("Cannot determine size of array '{}'", array_var));
+                                };
+
+                                // Iterate over array
+                                self.emit_line(&format!(
+                                    "for (size_t __i_{} = 0; __i_{} < {}; __i_{}++)",
+                                    var, var, array_size.0, var
+                                ));
+                                self.emit_line("{");
+                                self.indent();
+
+                                // Declare loop variable
+                                self.emit_line(&format!(
+                                    "{} {} = {}[__i_{}];",
+                                    array_size.1, var, array_var, var
+                                ));
+                            }
+                            _ => {
+                                return Err("For loop iterable must be array literal or array variable".to_string());
+                            }
+                        }
 
                         for stmt in &for_stmt.body.statements {
                             self.generate_statement(stmt)?;
@@ -457,6 +543,7 @@ impl CCodeGenerator {
                 format!("({}{})", op, operand)
             }
             Expression::Call(call) => {
+                // No automatic slice conversion - user must use & explicitly
                 let args: Vec<String> = call.arguments.iter()
                     .map(|arg| self.expression_to_c(arg))
                     .collect();
@@ -464,6 +551,18 @@ impl CCodeGenerator {
             }
 
             Expression::FieldAccess(field_access) => {
+                // Special handling for array.length
+                if field_access.field == "length" {
+                    // Check if the object is an array variable
+                    if let Expression::Variable(var_name) = &*field_access.object {
+                        if let Some(Type::Array { size: Some(n), .. }) = self.variable_types.get(var_name) {
+                            // Return compile-time size as a constant
+                            return format!("{}", n);
+                        }
+                    }
+                }
+
+                // Regular struct field access
                 let object = self.expression_to_c(&field_access.object);
                 // Determine if we need . or ->
                 // If the object is 'self' (in a method), it's always a pointer, so use ->
@@ -513,7 +612,11 @@ impl CCodeGenerator {
 
             Expression::MacroCall(macro_call) => {
                 use super::builtin::BuiltinMacroGenerator;
-                BuiltinMacroGenerator::generate_macro_call(macro_call, &|expr| self.expression_to_c(expr))
+                BuiltinMacroGenerator::generate_macro_call(
+                    macro_call,
+                    &|expr| self.expression_to_c(expr),
+                    &|expr| self.infer_expression_type(expr),
+                )
             }
 
             Expression::ArrayLiteral(array_lit) => {
@@ -534,12 +637,59 @@ impl CCodeGenerator {
             }
 
             Expression::Index(index_expr) => {
-                let array_code = self.expression_to_c(&index_expr.array);
                 let index_code = self.expression_to_c(&index_expr.index);
 
-                // For now, generate simple array indexing: array[index]
-                // Later when we implement slice structs, this will be: array.data[index]
+                // Check if this is a slice (unsized array parameter) or regular array
+                if let Expression::Variable(var_name) = &*index_expr.array {
+                    if let Some(Type::Array { size: None, .. }) = self.variable_types.get(var_name) {
+                        // Slice: use array.data[index]
+                        return format!("{}.data[{}]", var_name, index_code);
+                    }
+                }
+
+                // Regular array: use array[index]
+                let array_code = self.expression_to_c(&index_expr.array);
                 format!("{}[{}]", array_code, index_code)
+            }
+
+            Expression::Reference(ref_expr) => {
+                // &expr creates a slice from an array
+                // Generate: (Slice_T){.data = expr, .length = N}
+                match &*ref_expr.inner {
+                    Expression::Variable(var_name) => {
+                        // &arr where arr: [N]T
+                        if let Some(Type::Array { size: Some(n), element_type }) = self.variable_types.get(var_name) {
+                            let slice_type = format!("Slice_{}", element_type.to_c_type().replace("*", "ptr").replace(" ", "_"));
+                            format!("({}){{.data = {}, .length = {}}}", slice_type, var_name, n)
+                        } else {
+                            format!("/* cannot take reference of non-array {} */", var_name)
+                        }
+                    }
+                    Expression::ArrayLiteral(array_lit) => {
+                        // &[1, 2, 3]
+                        // Need to infer element type
+                        if let Some(first_elem) = array_lit.elements.first() {
+                            if let Some(elem_type) = self.infer_expression_type(first_elem) {
+                                let slice_type = format!("Slice_{}", elem_type.to_c_type().replace("*", "ptr").replace(" ", "_"));
+                                let len = array_lit.elements.len();
+                                // Create temporary array
+                                let elements_str: Vec<String> = array_lit.elements.iter()
+                                    .map(|e| self.expression_to_c(e))
+                                    .collect();
+                                // For now, create compound literal
+                                let array_literal = format!("({}[]){{ {} }}", elem_type.to_c_type(), elements_str.join(", "));
+                                format!("({}){{.data = {}, .length = {}}}", slice_type, array_literal, len)
+                            } else {
+                                "/* cannot infer array element type */".to_string()
+                            }
+                        } else {
+                            "/* empty array literal */".to_string()
+                        }
+                    }
+                    _ => {
+                        format!("/* unsupported reference expression */")
+                    }
+                }
             }
         }
     }
@@ -559,6 +709,35 @@ impl CCodeGenerator {
     fn dedent(&mut self) {
         if self.indent_level > 0 {
             self.indent_level -= 1;
+        }
+    }
+
+    /// Infer the type of an expression for builtin macros
+    fn infer_expression_type(&self, expr: &Expression) -> Option<Type> {
+        match expr {
+            Expression::Variable(name) => self.variable_types.get(name).cloned(),
+            Expression::IntLiteral(_) => Some(Type::I32),
+            Expression::FloatLiteral(_) => Some(Type::F64),
+            Expression::BoolLiteral(_) => Some(Type::Bool),
+            Expression::StringLiteral(_) => Some(Type::String),
+            Expression::FieldAccess(field_access) => {
+                // Special case for array.length
+                if field_access.field == "length" {
+                    Some(Type::I32)
+                } else {
+                    None
+                }
+            }
+            Expression::Index(index_expr) => {
+                // arr[i] returns element type
+                if let Expression::Variable(name) = &*index_expr.array {
+                    if let Some(Type::Array { element_type, .. }) = self.variable_types.get(name) {
+                        return Some((**element_type).clone());
+                    }
+                }
+                None
+            }
+            _ => None,
         }
     }
 

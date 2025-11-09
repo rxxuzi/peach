@@ -286,9 +286,10 @@ impl Parser {
             return Err("Expected '<-' or 'in' in for loop".to_string());
         }
 
-        // Parse iterable (range or array)
+        // Parse iterable (range, array literal, or array variable)
+        // Special parsing to avoid conflict with { } block syntax
         let iterable = if self.match_token(&TokenType::LeftBracket) {
-            // Array literal: [1, 2, 3, 4]
+            // Array literal: [1, 2, 3]
             let mut elements = Vec::new();
 
             if !self.check(&TokenType::RightBracket) {
@@ -301,13 +302,45 @@ impl Parser {
             }
 
             self.consume(&TokenType::RightBracket, "Expected ']' after array elements")?;
-            ForIterable::Array(elements)
+            ForIterable::Expression(Box::new(Expression::ArrayLiteral(ArrayLiteralExpression {
+                elements,
+                span: self.current_span(),
+            })))
         } else {
-            // Range: start..end
-            let start = self.expression()?;
-            self.consume(&TokenType::DotDot, "Expected '..' for range")?;
-            let end = self.expression()?;
-            ForIterable::Range(Box::new(start), Box::new(end))
+            // Parse iterable (variable or range)
+            // We need to avoid struct literal parsing, so we handle this carefully
+            // Check if it's a number (for range) or identifier (for variable/range)
+            if self.check_number() {
+                // Range starting with number: 0..n
+                let start = self.comparison()?;
+                self.consume(&TokenType::DotDot, "Expected '..' for range")?;
+                let end = self.comparison()?;
+                ForIterable::Range(Box::new(start), Box::new(end))
+            } else {
+                // Identifier - could be variable or range start
+                let ident = self.consume_identifier("Expected array variable or range start")?;
+
+                // Check for .length or other field access
+                let expr = if self.match_token(&TokenType::Dot) {
+                    let field = self.consume_identifier("Expected field name")?;
+                    Expression::FieldAccess(FieldAccessExpression {
+                        object: Box::new(Expression::Variable(ident)),
+                        field,
+                        span: self.current_span(),
+                    })
+                } else {
+                    Expression::Variable(ident)
+                };
+
+                if self.match_token(&TokenType::DotDot) {
+                    // Range: identifier..end or identifier.field..end
+                    let end = self.comparison()?;
+                    ForIterable::Range(Box::new(expr), Box::new(end))
+                } else {
+                    // Just an array variable reference
+                    ForIterable::Expression(Box::new(expr))
+                }
+            }
         };
 
         // body
@@ -780,6 +813,15 @@ impl Parser {
             }));
         }
 
+        // Reference operator (&) for creating slices
+        if self.match_token(&TokenType::Amp) {
+            let inner = self.primary()?;
+            return Ok(Expression::Reference(ReferenceExpression {
+                inner: Box::new(inner),
+                span: self.current_span(),
+            }));
+        }
+
         // Boolean literals
         if self.match_token(&TokenType::True) {
             return Ok(Expression::BoolLiteral(true));
@@ -944,25 +986,8 @@ impl Parser {
             }));
         }
 
-        if self.match_token(&TokenType::LeftBrace) {
-            let mut elements = Vec::new();
-
-            if !self.check(&TokenType::RightBrace) {
-                loop {
-                    elements.push(self.expression()?);
-                    if !self.match_token(&TokenType::Comma) {
-                        break;
-                    }
-                }
-            }
-
-            self.consume(&TokenType::RightBrace, "Expected '}' after array elements")?;
-
-            return Ok(Expression::ArrayLiteral(ArrayLiteralExpression {
-                elements,
-                span: self.current_span(),
-            }));
-        }
+        // Note: {} syntax for array literals is removed due to conflict with blocks
+        // Use [] syntax for array literals instead
 
         // Parenthesized expression
         if self.match_token(&TokenType::LeftParen) {
@@ -1060,6 +1085,14 @@ impl Parser {
     fn check(&self, token_type: &TokenType) -> bool {
         if let Some(token) = self.peek() {
             std::mem::discriminant(&token.token_type) == std::mem::discriminant(token_type)
+        } else {
+            false
+        }
+    }
+
+    fn check_number(&self) -> bool {
+        if let Some(token) = self.peek() {
+            matches!(token.token_type, TokenType::IntLiteral(_) | TokenType::FloatLiteral(_))
         } else {
             false
         }

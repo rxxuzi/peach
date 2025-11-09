@@ -210,11 +210,26 @@ impl TypeChecker {
                         match self.infer_expression_type(init) {
                             Ok(init_type) => {
                                 if !self.types_match(&init_type, declared_type) {
+                                    // Check if this is the common mistake of missing & for slice creation
+                                    let helpful_hint = if let (
+                                        Type::Array { element_type: decl_elem, size: None },
+                                        Type::Array { element_type: init_elem, size: Some(_) }
+                                    ) = (declared_type, &init_type) {
+                                        if decl_elem == init_elem {
+                                            "\n  hint: to create a slice from an array literal, use &[...] instead of [...]"
+                                        } else {
+                                            ""
+                                        }
+                                    } else {
+                                        ""
+                                    };
+
                                     self.errors.push(format!(
-                                        "Type mismatch: variable '{}' declared as '{}' but initialized with '{}'",
+                                        "Type mismatch: variable '{}' declared as '{}' but initialized with '{}'{}'",
                                         var_decl.name,
                                         declared_type.to_string(),
-                                        init_type.to_string()
+                                        init_type.to_string(),
+                                        helpful_hint
                                     ));
                                 }
                             }
@@ -465,35 +480,28 @@ impl TypeChecker {
                             (Type::I32, false)  // loop variable is immutable
                         );
                     }
-                    ForIterable::Array(elements) => {
-                        // Infer array element type from first element
-                        if let Some(first) = elements.first() {
-                            match self.infer_expression_type(first) {
-                                Ok(elem_type) => {
-                                    // Check all elements have same type
-                                    for (i, elem) in elements.iter().enumerate().skip(1) {
-                                        match self.infer_expression_type(elem) {
-                                            Ok(t) => {
-                                                if !self.types_match(&t, &elem_type) {
-                                                    self.errors.push(format!(
-                                                        "Array element {} has type '{}', expected '{}'",
-                                                        i,
-                                                        t.to_string(),
-                                                        elem_type.to_string()
-                                                    ));
-                                                }
-                                            }
-                                            Err(e) => self.errors.push(e),
-                                        }
+                    ForIterable::Expression(expr) => {
+                        // Infer type of the expression (array literal or array variable)
+                        match self.infer_expression_type(expr) {
+                            Ok(array_type) => {
+                                // Extract element type from array type
+                                match array_type {
+                                    Type::Array { element_type, .. } => {
+                                        // Loop variable has element type
+                                        self.symbol_table.insert(
+                                            for_stmt.variable.clone(),
+                                            (*element_type, false)  // loop variable is immutable
+                                        );
                                     }
-                                    // Loop variable has element type
-                                    self.symbol_table.insert(
-                                        for_stmt.variable.clone(),
-                                        (elem_type, false)  // loop variable is immutable
-                                    );
+                                    _ => {
+                                        self.errors.push(format!(
+                                            "Cannot iterate over non-array type '{}'",
+                                            array_type.to_string()
+                                        ));
+                                    }
                                 }
-                                Err(e) => self.errors.push(e),
                             }
+                            Err(e) => self.errors.push(e),
                         }
                     }
                 }
@@ -640,12 +648,27 @@ impl TypeChecker {
                     for (i, (arg, expected_type)) in call.arguments.iter().zip(param_types.iter()).enumerate() {
                         let arg_type = self.infer_expression_type(arg)?;
                         if !self.types_match(&arg_type, expected_type) {
+                            // Check if this is the common mistake of missing & for slice parameter
+                            let helpful_hint = if let (
+                                Type::Array { element_type: exp_elem, size: None },
+                                Type::Array { element_type: arg_elem, size: Some(_) }
+                            ) = (expected_type, &arg_type) {
+                                if exp_elem == arg_elem {
+                                    "\n  hint: to pass an array as a slice, use &array instead of array"
+                                } else {
+                                    ""
+                                }
+                            } else {
+                                ""
+                            };
+
                             return Err(format!(
-                                "Type mismatch in argument {} of function '{}': expected '{}', found '{}'",
+                                "Type mismatch in argument {} of function '{}': expected '{}', found '{}'{}'",
                                 i + 1,
                                 call.callee,
                                 expected_type.to_string(),
-                                arg_type.to_string()
+                                arg_type.to_string(),
+                                helpful_hint
                             ));
                         }
                     }
@@ -660,30 +683,43 @@ impl TypeChecker {
                 // Infer type of the object
                 let object_type = self.infer_expression_type(&field_access.object)?;
 
-                // Extract struct name from type
-                let struct_name = match object_type {
-                    Type::Struct(name) => name,
-                    _ => return Err(format!(
-                        "Cannot access field '{}' on non-struct type '{}'",
-                        field_access.field,
-                        object_type.to_string()
-                    )),
-                };
-
-                // Look up the struct definition
-                if let Some(fields) = self.struct_table.get(&struct_name) {
-                    // Find the field
-                    if let Some(field) = fields.iter().find(|f| f.name == field_access.field) {
-                        Ok(field.field_type.clone())
-                    } else {
+                match object_type {
+                    Type::Array { .. } => {
+                        // Array property access
+                        if field_access.field == "length" {
+                            Ok(Type::I32)  // length returns i32
+                        } else {
+                            Err(format!(
+                                "Arrays only have 'length' property, not '{}'",
+                                field_access.field
+                            ))
+                        }
+                    }
+                    Type::Struct(struct_name) => {
+                        // Struct field access
+                        // Look up the struct definition
+                        if let Some(fields) = self.struct_table.get(&struct_name) {
+                            // Find the field
+                            if let Some(field) = fields.iter().find(|f| f.name == field_access.field) {
+                                Ok(field.field_type.clone())
+                            } else {
+                                Err(format!(
+                                    "Struct '{}' has no field named '{}'",
+                                    struct_name,
+                                    field_access.field
+                                ))
+                            }
+                        } else {
+                            Err(format!("Undefined struct '{}'", struct_name))
+                        }
+                    }
+                    _ => {
                         Err(format!(
-                            "Struct '{}' has no field named '{}'",
-                            struct_name,
-                            field_access.field
+                            "Cannot access field '{}' on type '{}'",
+                            field_access.field,
+                            object_type.to_string()
                         ))
                     }
-                } else {
-                    Err(format!("Undefined struct '{}'", struct_name))
                 }
             }
 
@@ -960,10 +996,32 @@ impl TypeChecker {
                     }
                 }
             }
+            Expression::Reference(ref_expr) => {
+                // &expr creates a slice from an array
+                let inner_type = self.infer_expression_type(&ref_expr.inner)?;
+
+                match inner_type {
+                    Type::Array { element_type, .. } => {
+                        // &[N]T → []T (slice)
+                        Ok(Type::Array {
+                            element_type,
+                            size: None,  // Slice has no compile-time size
+                        })
+                    }
+                    _ => {
+                        Err(format!(
+                            "Cannot create slice from non-array type '{}'",
+                            inner_type.to_string()
+                        ))
+                    }
+                }
+            }
         }
     }
 
     fn types_match(&self, t1: &Type, t2: &Type) -> bool {
+        // Types must match exactly - no automatic conversions
+        // User must use & explicitly to convert [N]T to []T
         t1 == t2
     }
 

@@ -1,65 +1,98 @@
 // Builtin macro code generation
 
-use crate::parser::ast::{MacroCallExpression, Expression};
+use crate::parser::ast::{MacroCallExpression, Expression, Type};
 
 pub struct BuiltinMacroGenerator;
 
 impl BuiltinMacroGenerator {
-    pub fn generate_macro_call(macro_call: &MacroCallExpression, expression_to_c: &dyn Fn(&Expression) -> String) -> String {
+    pub fn generate_macro_call(
+        macro_call: &MacroCallExpression,
+        expression_to_c: &dyn Fn(&Expression) -> String,
+        infer_type: &dyn Fn(&Expression) -> Option<Type>,
+    ) -> String {
         match macro_call.macro_name.as_str() {
-            "print" => Self::generate_print(macro_call, expression_to_c),
-            "println" => Self::generate_println(macro_call, expression_to_c),
-            "panic" => Self::generate_panic(macro_call, expression_to_c),
-            "format" => Self::generate_format(macro_call, expression_to_c),
+            "print" => Self::generate_print(macro_call, expression_to_c, infer_type),
+            "println" => Self::generate_println(macro_call, expression_to_c, infer_type),
+            "panic" => Self::generate_panic(macro_call, expression_to_c, infer_type),
+            "format" => Self::generate_format(macro_call, expression_to_c, infer_type),
             _ => format!("/* Unknown macro: {} */", macro_call.macro_name),
         }
     }
 
-    fn generate_print(macro_call: &MacroCallExpression, expression_to_c: &dyn Fn(&Expression) -> String) -> String {
+    fn generate_print(
+        macro_call: &MacroCallExpression,
+        expression_to_c: &dyn Fn(&Expression) -> String,
+        infer_type: &dyn Fn(&Expression) -> Option<Type>,
+    ) -> String {
         // print!(...) → printf(...)
-        let args: Vec<String> = macro_call.arguments.iter()
-            .map(|arg| expression_to_c(arg))
-            .collect();
+        if macro_call.arguments.is_empty() {
+            return "printf(\"\")".to_string();
+        }
 
-        if args.is_empty() {
-            "printf(\"\")".to_string()
-        } else if args.len() == 1 {
-            // Single argument - check if it's a string literal or variable
-            let first = &args[0];
-            if first.starts_with('"') && first.ends_with('"') {
+        if macro_call.arguments.len() == 1 {
+            // Single argument - infer type and generate appropriate printf
+            let arg = &macro_call.arguments[0];
+            let arg_c = expression_to_c(arg);
+
+            // Check if it's a string literal
+            if arg_c.starts_with('"') && arg_c.ends_with('"') {
                 // String literal
-                format!("printf({})", first)
+                return format!("printf({})", arg_c);
+            }
+
+            // Infer the type
+            if let Some(ty) = infer_type(arg) {
+                let format_spec = Self::type_to_format_specifier(&ty);
+                format!("printf(\"{}\", {})", format_spec, arg_c)
             } else {
-                // Variable - use %s format
-                format!("printf(\"%s\", {})", first)
+                // Fallback to %s if type inference fails
+                format!("printf(\"%s\", {})", arg_c)
             }
         } else {
             // Multiple arguments - first should be format string
+            let args: Vec<String> = macro_call.arguments.iter()
+                .map(|arg| expression_to_c(arg))
+                .collect();
             format!("printf({})", args.join(", "))
         }
     }
 
-    fn generate_println(macro_call: &MacroCallExpression, expression_to_c: &dyn Fn(&Expression) -> String) -> String {
+    fn generate_println(
+        macro_call: &MacroCallExpression,
+        expression_to_c: &dyn Fn(&Expression) -> String,
+        infer_type: &dyn Fn(&Expression) -> Option<Type>,
+    ) -> String {
         // println!(...) → printf(...\n)
-        let args: Vec<String> = macro_call.arguments.iter()
-            .map(|arg| expression_to_c(arg))
-            .collect();
+        if macro_call.arguments.is_empty() {
+            return "printf(\"\\n\")".to_string();
+        }
 
-        if args.is_empty() {
-            "printf(\"\\n\")".to_string()
-        } else if args.len() == 1 {
-            // Single argument
-            let first = &args[0];
-            if first.starts_with('"') && first.ends_with('"') {
+        if macro_call.arguments.len() == 1 {
+            // Single argument - infer type and generate appropriate printf
+            let arg = &macro_call.arguments[0];
+            let arg_c = expression_to_c(arg);
+
+            // Check if it's a string literal
+            if arg_c.starts_with('"') && arg_c.ends_with('"') {
                 // String literal - add \n before closing quote
-                let without_quote = &first[1..first.len()-1];
-                format!("printf(\"{}\\n\")", without_quote)
+                let without_quote = &arg_c[1..arg_c.len()-1];
+                return format!("printf(\"{}\\n\")", without_quote);
+            }
+
+            // Infer the type
+            if let Some(ty) = infer_type(arg) {
+                let format_spec = Self::type_to_format_specifier(&ty);
+                format!("printf(\"{}\\n\", {})", format_spec, arg_c)
             } else {
-                // Variable - use %s format with \n
-                format!("printf(\"%s\\n\", {})", first)
+                // Fallback to %s if type inference fails
+                format!("printf(\"%s\\n\", {})", arg_c)
             }
         } else {
-            // Multiple arguments - modify format string to add \n
+            // Multiple arguments - first should be format string
+            let args: Vec<String> = macro_call.arguments.iter()
+                .map(|arg| expression_to_c(arg))
+                .collect();
+
             let mut new_args = args.clone();
             let first = &args[0];
             if first.starts_with('"') && first.ends_with('"') {
@@ -69,7 +102,11 @@ impl BuiltinMacroGenerator {
         }
     }
 
-    fn generate_panic(macro_call: &MacroCallExpression, expression_to_c: &dyn Fn(&Expression) -> String) -> String {
+    fn generate_panic(
+        macro_call: &MacroCallExpression,
+        expression_to_c: &dyn Fn(&Expression) -> String,
+        _infer_type: &dyn Fn(&Expression) -> Option<Type>,
+    ) -> String {
         // panic!(...) → fprintf(stderr, ...) + exit(1)
         let args: Vec<String> = macro_call.arguments.iter()
             .map(|arg| expression_to_c(arg))
@@ -92,9 +129,29 @@ impl BuiltinMacroGenerator {
         }
     }
 
-    fn generate_format(_macro_call: &MacroCallExpression, _expression_to_c: &dyn Fn(&Expression) -> String) -> String {
+    fn generate_format(
+        _macro_call: &MacroCallExpression,
+        _expression_to_c: &dyn Fn(&Expression) -> String,
+        _infer_type: &dyn Fn(&Expression) -> Option<Type>,
+    ) -> String {
         // format!(...) - For v0.2.1, just return empty string
         // TODO: Implement proper format string handling with string allocation
         "\"\"".to_string()
+    }
+
+    /// Get the appropriate printf format specifier for a type
+    fn type_to_format_specifier(ty: &Type) -> &'static str {
+        match ty {
+            Type::I8 | Type::I16 | Type::I32 => "%d",
+            Type::I64 => "%lld",
+            Type::U8 | Type::U16 | Type::U32 => "%u",
+            Type::U64 => "%llu",
+            Type::F32 | Type::F64 => "%f",
+            Type::Bool => "%d",  // bool prints as 0/1
+            Type::String => "%s",
+            Type::Array { .. } => "%p",  // Arrays print as pointer for now
+            Type::Struct(_) => "%p",     // Structs print as pointer
+            Type::Void => "",
+        }
     }
 }
