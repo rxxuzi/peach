@@ -83,6 +83,10 @@ pub enum Type {
     Void,
     String,  // String type
     Struct(String),  // User-defined struct type
+    Array {
+        element_type: Box<Type>,
+        size: Option<usize>,  // None for size inference: []i32, Some(5) for [5]i32
+    },
 }
 
 impl Type {
@@ -102,6 +106,13 @@ impl Type {
             Type::Void => "void".to_string(),
             Type::String => "string".to_string(),
             Type::Struct(name) => name.clone(),
+            Type::Array { element_type, size } => {
+                if let Some(n) = size {
+                    format!("[{}]{}", n, element_type.to_string())
+                } else {
+                    format!("[]{}", element_type.to_string())
+                }
+            }
         }
     }
 
@@ -121,6 +132,10 @@ impl Type {
             Type::Void => "void".to_string(),
             Type::String => "char*".to_string(),
             Type::Struct(name) => name.clone(),  // Struct types map directly to their name
+            Type::Array { element_type, .. } => {
+                // Arrays are represented as slice structs in C: Slice_<type>
+                format!("Slice_{}", element_type.to_c_type().replace("*", "ptr"))
+            }
         }
     }
 }
@@ -161,6 +176,7 @@ pub struct VarDeclStatement {
 pub enum AssignmentTarget {
     Variable(String),
     FieldAccess(FieldAccessExpression),
+    Index(IndexExpression),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -192,6 +208,8 @@ pub enum Expression {
     AssociatedCall(AssociatedCallExpression),
     StructLiteral(StructLiteralExpression),
     MacroCall(MacroCallExpression),
+    ArrayLiteral(ArrayLiteralExpression),
+    Index(IndexExpression),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -311,5 +329,18 @@ pub struct StructLiteralField {
 pub struct MacroCallExpression {
     pub macro_name: String,  // "print", "println", "format", "panic"
     pub arguments: Vec<Expression>,  // First arg is format string, rest are values
+    pub span: Option<Span>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ArrayLiteralExpression {
+    pub elements: Vec<Expression>,
+    pub span: Option<Span>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct IndexExpression {
+    pub array: Box<Expression>,
+    pub index: Box<Expression>,
     pub span: Option<Span>,
 }

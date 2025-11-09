@@ -350,6 +350,44 @@ impl TypeChecker {
                             }
                         }
                     }
+
+                    AssignmentTarget::Index(index_expr) => {
+                        // Get the element type from the array index expression
+                        match self.infer_expression_type(&Expression::Index(index_expr.clone())) {
+                            Ok(elem_type) => {
+                                // Check the array itself for mutability
+                                if let Expression::Variable(var_name) = &*index_expr.array {
+                                    if let Some((_, is_mutable)) = self.symbol_table.get(var_name) {
+                                        if !is_mutable {
+                                            self.errors.push(format!(
+                                                "Cannot assign to element of immutable array '{}'",
+                                                var_name
+                                            ));
+                                        }
+                                    }
+                                }
+
+                                // Check type compatibility with assigned value
+                                match self.infer_expression_type(&assignment.value) {
+                                    Ok(value_type) => {
+                                        if !self.types_match(&value_type, &elem_type) {
+                                            self.errors.push(format!(
+                                                "Type mismatch in array element assignment: element has type '{}' but assigned value has type '{}'",
+                                                elem_type.to_string(),
+                                                value_type.to_string()
+                                            ));
+                                        }
+                                    }
+                                    Err(e) => {
+                                        self.errors.push(e);
+                                    }
+                                }
+                            }
+                            Err(e) => {
+                                self.errors.push(e);
+                            }
+                        }
+                    }
                 }
             }
 
@@ -860,6 +898,65 @@ impl TypeChecker {
                     _ => {
                         let msg = format!("Unknown builtin macro '{}'", macro_call.macro_name);
                         Err(self.error_with_span(msg, macro_call.span.clone()))
+                    }
+                }
+            }
+            Expression::ArrayLiteral(array_lit) => {
+                if array_lit.elements.is_empty() {
+                    // Empty array literal - cannot infer type
+                    return Err("Cannot infer type of empty array literal. Specify element type explicitly.".to_string());
+                }
+
+                // Infer type from first element
+                let first_elem_type = self.infer_expression_type(&array_lit.elements[0])?;
+
+                // Check all elements have the same type
+                for (i, elem) in array_lit.elements.iter().enumerate().skip(1) {
+                    let elem_type = self.infer_expression_type(elem)?;
+                    if !self.types_match(&elem_type, &first_elem_type) {
+                        return Err(format!(
+                            "Array element type mismatch: element 0 has type '{}' but element {} has type '{}'",
+                            first_elem_type.to_string(),
+                            i,
+                            elem_type.to_string()
+                        ));
+                    }
+                }
+
+                // Return array type with inferred size and element type
+                Ok(Type::Array {
+                    element_type: Box::new(first_elem_type),
+                    size: Some(array_lit.elements.len()),
+                })
+            }
+            Expression::Index(index_expr) => {
+                // Get the type of the array expression
+                let array_type = self.infer_expression_type(&index_expr.array)?;
+
+                // Ensure it's actually an array
+                match array_type {
+                    Type::Array { element_type, .. } => {
+                        // Check that index is an integer type
+                        let index_type = self.infer_expression_type(&index_expr.index)?;
+                        match index_type {
+                            Type::I8 | Type::I16 | Type::I32 | Type::I64 |
+                            Type::U8 | Type::U16 | Type::U32 | Type::U64 => {
+                                // Index is valid, return element type
+                                Ok(*element_type)
+                            }
+                            _ => {
+                                Err(format!(
+                                    "Array index must be an integer type, got '{}'",
+                                    index_type.to_string()
+                                ))
+                            }
+                        }
+                    }
+                    _ => {
+                        Err(format!(
+                            "Cannot index into non-array type '{}'",
+                            array_type.to_string()
+                        ))
                     }
                 }
             }

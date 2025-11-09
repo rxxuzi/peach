@@ -221,18 +221,46 @@ impl CCodeGenerator {
                 // Track variable type for method calls
                 self.variable_types.insert(var_decl.name.clone(), var_type.clone());
 
-                let c_type = var_type.to_c_type();
+                // Special handling for array types
+                match &var_type {
+                    Type::Array { element_type, size } => {
+                        // Generate C array declaration
+                        let elem_c_type = element_type.to_c_type();
+                        let size_str = if let Some(n) = size {
+                            format!("[{}]", n)
+                        } else {
+                            // Size should have been inferred by semantic analysis
+                            return Err(format!(
+                                "Internal error: Array '{}' has no size after semantic analysis",
+                                var_decl.name
+                            ));
+                        };
 
-                // Generate declaration
-                let mut line = format!("{}{} {}", const_keyword, c_type, var_decl.name);
+                        let mut line = format!("{}{} {}{}", const_keyword, elem_c_type, var_decl.name, size_str);
 
-                if let Some(ref init) = var_decl.initializer {
-                    line.push_str(" = ");
-                    line.push_str(&self.expression_to_c(init));
+                        if let Some(ref init) = var_decl.initializer {
+                            line.push_str(" = ");
+                            line.push_str(&self.expression_to_c(init));
+                        }
+
+                        line.push(';');
+                        self.emit_line(&line);
+                    }
+                    _ => {
+                        // Regular variable declaration
+                        let c_type = var_type.to_c_type();
+
+                        let mut line = format!("{}{} {}", const_keyword, c_type, var_decl.name);
+
+                        if let Some(ref init) = var_decl.initializer {
+                            line.push_str(" = ");
+                            line.push_str(&self.expression_to_c(init));
+                        }
+
+                        line.push(';');
+                        self.emit_line(&line);
+                    }
                 }
-
-                line.push(';');
-                self.emit_line(&line);
             }
             Statement::Assignment(assignment) => {
                 let value_code = self.expression_to_c(&assignment.value);
@@ -247,6 +275,13 @@ impl CCodeGenerator {
                             "."
                         };
                         format!("{}{}{}", object, accessor, field_access.field)
+                    }
+                    AssignmentTarget::Index(index_expr) => {
+                        let array_code = self.expression_to_c(&index_expr.array);
+                        let index_code = self.expression_to_c(&index_expr.index);
+                        // For now, generate simple array indexing: array[index]
+                        // Later when we implement slice structs, this will be: array.data[index]
+                        format!("{}[{}]", array_code, index_code)
                     }
                 };
                 self.emit_line(&format!("{} = {};", target_code, value_code));
@@ -479,6 +514,32 @@ impl CCodeGenerator {
             Expression::MacroCall(macro_call) => {
                 use super::builtin::BuiltinMacroGenerator;
                 BuiltinMacroGenerator::generate_macro_call(macro_call, &|expr| self.expression_to_c(expr))
+            }
+
+            Expression::ArrayLiteral(array_lit) => {
+                if array_lit.elements.is_empty() {
+                    // Empty array - this should have been caught by type checker
+                    return "/* empty array */".to_string();
+                }
+
+                // Generate elements
+                let elements: Vec<String> = array_lit.elements
+                    .iter()
+                    .map(|e| self.expression_to_c(e))
+                    .collect();
+
+                // For now, just generate the C array literal
+                // Later we'll wrap this in a slice struct
+                format!("{{{}}}", elements.join(", "))
+            }
+
+            Expression::Index(index_expr) => {
+                let array_code = self.expression_to_c(&index_expr.array);
+                let index_code = self.expression_to_c(&index_expr.index);
+
+                // For now, generate simple array indexing: array[index]
+                // Later when we implement slice structs, this will be: array.data[index]
+                format!("{}[{}]", array_code, index_code)
             }
         }
     }

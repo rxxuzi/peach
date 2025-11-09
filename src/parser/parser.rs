@@ -155,6 +155,7 @@ impl Parser {
             let target = match expr {
                 Expression::Variable(name) => AssignmentTarget::Variable(name),
                 Expression::FieldAccess(field_access) => AssignmentTarget::FieldAccess(field_access),
+                Expression::Index(index_expr) => AssignmentTarget::Index(index_expr),
                 _ => {
                     return Err("Invalid assignment target".to_string());
                 }
@@ -709,7 +710,7 @@ impl Parser {
     fn postfix(&mut self) -> Result<Expression, String> {
         let mut expr = self.primary()?;
 
-        // Handle postfix operations: field access, method calls
+        // Handle postfix operations: field access, method calls, array indexing
         loop {
             if self.match_token(&TokenType::Dot) {
                 // Field access or method call
@@ -743,6 +744,16 @@ impl Parser {
                         span: self.current_span(),
                     });
                 }
+            } else if self.match_token(&TokenType::LeftBracket) {
+                // Array indexing: arr[index]
+                let index = self.expression()?;
+                self.consume(&TokenType::RightBracket, "Expected ']' after array index")?;
+
+                expr = Expression::Index(IndexExpression {
+                    array: Box::new(expr),
+                    index: Box::new(index),
+                    span: self.current_span(),
+                });
             } else {
                 break;
             }
@@ -912,6 +923,47 @@ impl Parser {
             }
         }
 
+        // Array literals: [1, 2, 3] or {1, 2, 3}
+        if self.match_token(&TokenType::LeftBracket) {
+            let mut elements = Vec::new();
+
+            if !self.check(&TokenType::RightBracket) {
+                loop {
+                    elements.push(self.expression()?);
+                    if !self.match_token(&TokenType::Comma) {
+                        break;
+                    }
+                }
+            }
+
+            self.consume(&TokenType::RightBracket, "Expected ']' after array elements")?;
+
+            return Ok(Expression::ArrayLiteral(ArrayLiteralExpression {
+                elements,
+                span: self.current_span(),
+            }));
+        }
+
+        if self.match_token(&TokenType::LeftBrace) {
+            let mut elements = Vec::new();
+
+            if !self.check(&TokenType::RightBrace) {
+                loop {
+                    elements.push(self.expression()?);
+                    if !self.match_token(&TokenType::Comma) {
+                        break;
+                    }
+                }
+            }
+
+            self.consume(&TokenType::RightBrace, "Expected '}' after array elements")?;
+
+            return Ok(Expression::ArrayLiteral(ArrayLiteralExpression {
+                elements,
+                span: self.current_span(),
+            }));
+        }
+
         // Parenthesized expression
         if self.match_token(&TokenType::LeftParen) {
             let expr = self.expression()?;
@@ -928,6 +980,36 @@ impl Parser {
     }
 
     fn parse_type(&mut self) -> Result<Type, String> {
+        // Check for array type: [N]T or []T
+        if self.match_token(&TokenType::LeftBracket) {
+            // Parse optional size
+            let size = if self.check(&TokenType::RightBracket) {
+                None  // []T - size will be inferred
+            } else {
+                // [N]T - parse the size as an integer
+                if let Some(token) = self.peek() {
+                    if let TokenType::IntLiteral(value) = &token.token_type {
+                        let size_val = value.parse::<usize>()
+                            .map_err(|_| format!("Invalid array size: {}", value))?;
+                        self.advance();
+                        Some(size_val)
+                    } else {
+                        return Err("Expected integer size in array type".to_string());
+                    }
+                } else {
+                    return Err("Expected integer size or ] in array type".to_string());
+                }
+            };
+
+            self.consume(&TokenType::RightBracket, "Expected ']' in array type")?;
+
+            // Parse element type
+            let element_type = Box::new(self.parse_type()?);
+
+            return Ok(Type::Array { element_type, size });
+        }
+
+        // Parse regular types
         if let Some(token) = self.peek() {
             let ty = match &token.token_type {
                 TokenType::I8 => Type::I8,
