@@ -48,7 +48,7 @@ pub struct Method {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum SelfParam {
-    Owned,      // self (not implemented in v0.2.0)
+    Owned,      // self (not yet implemented)
     Ref,        // &self
     MutRef,     // &mut self
 }
@@ -81,6 +81,7 @@ pub enum Type {
     F64,
     Bool,
     Void,
+    String,  // String type
     Struct(String),  // User-defined struct type
 }
 
@@ -99,6 +100,7 @@ impl Type {
             Type::F64 => "f64".to_string(),
             Type::Bool => "bool".to_string(),
             Type::Void => "void".to_string(),
+            Type::String => "string".to_string(),
             Type::Struct(name) => name.clone(),
         }
     }
@@ -117,6 +119,7 @@ impl Type {
             Type::F64 => "double".to_string(),
             Type::Bool => "bool".to_string(),
             Type::Void => "void".to_string(),
+            Type::String => "char*".to_string(),
             Type::Struct(name) => name.clone(),  // Struct types map directly to their name
         }
     }
@@ -179,6 +182,7 @@ pub enum Expression {
     IntLiteral(i64),
     FloatLiteral(f64),
     BoolLiteral(bool),
+    StringLiteral(String),
     Variable(String),
     Binary(BinaryExpression),
     Unary(UnaryExpression),
@@ -187,6 +191,7 @@ pub enum Expression {
     MethodCall(MethodCallExpression),
     AssociatedCall(AssociatedCallExpression),
     StructLiteral(StructLiteralExpression),
+    MacroCall(MacroCallExpression),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -300,4 +305,11 @@ pub struct StructLiteralExpression {
 pub struct StructLiteralField {
     pub name: String,
     pub value: Expression,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct MacroCallExpression {
+    pub macro_name: String,  // "print", "println", "format", "panic"
+    pub arguments: Vec<Expression>,  // First arg is format string, rest are values
+    pub span: Option<Span>,
 }

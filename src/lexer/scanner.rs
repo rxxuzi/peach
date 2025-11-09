@@ -137,6 +137,9 @@ impl Scanner {
                     self.add_token(TokenType::Dot);
                 }
             }
+            '"' => {
+                self.string()?;
+            }
             _ => {
                 if c.is_alphabetic() || c == '_' {
                     self.identifier();
@@ -215,6 +218,7 @@ impl Scanner {
             "f64" => TokenType::F64,
             "bool" => TokenType::Bool,
             "void" => TokenType::Void,
+            "string" => TokenType::String,
             // Literals
             "true" => TokenType::True,
             "false" => TokenType::False,
@@ -297,5 +301,54 @@ impl Scanner {
 
     fn is_at_end(&self) -> bool {
         self.current >= self.source.len()
+    }
+
+    fn string(&mut self) -> Result<(), String> {
+        let start_line = self.line;
+        let mut value = String::new();
+
+        while self.peek() != '"' && !self.is_at_end() {
+            if self.peek() == '\n' {
+                self.line += 1;
+                self.column = 0;  // Will be incremented by advance()
+            }
+
+            // Handle escape sequences
+            if self.peek() == '\\' {
+                self.advance();  // consume backslash
+                if !self.is_at_end() {
+                    let escaped = self.peek();
+                    match escaped {
+                        'n' => value.push('\n'),
+                        't' => value.push('\t'),
+                        'r' => value.push('\r'),
+                        '\\' => value.push('\\'),
+                        '"' => value.push('"'),
+                        _ => {
+                            // Unknown escape sequence, just include it as-is
+                            value.push('\\');
+                            value.push(escaped);
+                        }
+                    }
+                    self.advance();
+                }
+            } else {
+                value.push(self.peek());
+                self.advance();
+            }
+        }
+
+        if self.is_at_end() {
+            return Err(format!(
+                "Unterminated string starting at line {}",
+                start_line
+            ));
+        }
+
+        // Consume closing "
+        self.advance();
+
+        self.add_token(TokenType::StringLiteral(value));
+        Ok(())
     }
 }

@@ -39,7 +39,7 @@ fn parse_args(args: &[String]) -> Result<(String, CompileOptions), String> {
         check_only: false,
         output_path: None,
         warnings: false,
-        use_build_dir: true,   // pc uses build directory (tests/ -> tests/out/)
+        use_build_dir: false,  // pc outputs to current directory
         dry_run: false,
     };
 

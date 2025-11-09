@@ -33,6 +33,7 @@ pub enum TokenType {
     F64,        // f64
     Bool,       // bool
     Void,       // void
+    String,     // string
 
     // Literals
     True,       // true
@@ -42,6 +43,7 @@ pub enum TokenType {
     Identifier(String),
     IntLiteral(String),
     FloatLiteral(String),
+    StringLiteral(String),
 
     // Arithmetic operators
     Plus,           // +

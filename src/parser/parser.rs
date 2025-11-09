@@ -410,8 +410,8 @@ impl Parser {
                 self.consume(&TokenType::Comma, "Expected ',' after self parameter")?;
             }
         } else if self.match_token(&TokenType::SelfKeyword) {
-            // Owned self (not supported in v0.2.0)
-            return Err("Owned 'self' parameter is not supported in v0.2.0. Use '&self' or '&mut self'.".to_string());
+            // Owned self (not yet implemented)
+            return Err("Owned 'self' parameter is not yet implemented. Use '&self' or '&mut self'.".to_string());
         }
 
         // Parse remaining parameters (or all parameters if no self)
@@ -797,9 +797,37 @@ impl Parser {
                     self.advance();
                     return Ok(Expression::FloatLiteral(float_value));
                 }
+                TokenType::StringLiteral(value) => {
+                    let str_value = value.clone();
+                    self.advance();
+                    return Ok(Expression::StringLiteral(str_value));
+                }
                 TokenType::Identifier(name) => {
                     let var_name = name.clone();
                     self.advance();
+
+                    // Check for macro call (identifier!(...))
+                    if self.match_token(&TokenType::Bang) {
+                        self.consume(&TokenType::LeftParen, "Expected '(' after '!' in macro call")?;
+
+                        let mut arguments = Vec::new();
+                        if !self.check(&TokenType::RightParen) {
+                            loop {
+                                arguments.push(self.expression()?);
+                                if !self.match_token(&TokenType::Comma) {
+                                    break;
+                                }
+                            }
+                        }
+
+                        self.consume(&TokenType::RightParen, "Expected ')' after macro arguments")?;
+
+                        return Ok(Expression::MacroCall(MacroCallExpression {
+                            macro_name: var_name,
+                            arguments,
+                            span: self.current_span(),
+                        }));
+                    }
 
                     // Check for associated function call (Type::function())
                     if self.match_token(&TokenType::ColonColon) {
@@ -914,6 +942,7 @@ impl Parser {
                 TokenType::F64 => Type::F64,
                 TokenType::Bool => Type::Bool,
                 TokenType::Void => Type::Void,
+                TokenType::String => Type::String,
                 TokenType::Identifier(name) => Type::Struct(name.clone()),
                 _ => return Err("Expected type".to_string()),
             };

@@ -33,6 +33,8 @@ impl CCodeGenerator {
         }
 
         // Headers
+        self.emit_line("#include <stdio.h>");
+        self.emit_line("#include <stdlib.h>");
         self.emit_line("#include <stdint.h>");
         self.emit_line("#include <stdbool.h>");
         self.emit_line("");
@@ -87,7 +89,7 @@ impl CCodeGenerator {
                 match self_param {
                     SelfParam::Ref => params.push(format!("const {}* self", struct_name)),
                     SelfParam::MutRef => params.push(format!("{}* self", struct_name)),
-                    SelfParam::Owned => return Err("Owned self parameter not supported in v0.2.0".to_string()),
+                    SelfParam::Owned => return Err("Owned self parameter not yet implemented".to_string()),
                 }
             }
 
@@ -380,6 +382,16 @@ impl CCodeGenerator {
             Expression::IntLiteral(value) => value.to_string(),
             Expression::FloatLiteral(value) => value.to_string(),
             Expression::BoolLiteral(value) => if *value { "true" } else { "false" }.to_string(),
+            Expression::StringLiteral(value) => {
+                // Escape special characters for C string literal
+                let escaped = value
+                    .replace("\\", "\\\\")
+                    .replace("\"", "\\\"")
+                    .replace("\n", "\\n")
+                    .replace("\t", "\\t")
+                    .replace("\r", "\\r");
+                format!("\"{}\"", escaped)
+            }
             Expression::Variable(name) => name.clone(),
             Expression::Binary(binary) => {
                 let left = self.expression_to_c(&binary.left);
@@ -462,6 +474,11 @@ impl CCodeGenerator {
                     .map(|f| format!(".{} = {}", f.name, self.expression_to_c(&f.value)))
                     .collect();
                 format!("({}){{{}}}", struct_literal.struct_name, fields.join(", "))
+            }
+
+            Expression::MacroCall(macro_call) => {
+                use super::builtin::BuiltinMacroGenerator;
+                BuiltinMacroGenerator::generate_macro_call(macro_call, &|expr| self.expression_to_c(expr))
             }
         }
     }

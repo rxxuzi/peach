@@ -162,9 +162,21 @@ fn get_output_path_build(input_file: &str) -> String {
     let path = Path::new(input_file);
     let stem = path.file_stem().unwrap().to_str().unwrap();
 
-    // If input is from tests/ directory, output to tests/out/
+    // If input is from tests/ directory, preserve subdirectory structure
+    // tests/v0.2.1/test.peach -> tests/v0.2.1/out/test.c
     if input_file.starts_with("tests/") || input_file.starts_with("tests\\") {
-        format!("tests/out/{}.c", stem)
+        // Extract the subdirectory if present
+        let normalized = input_file.replace("\\", "/");
+        let parts: Vec<&str> = normalized.split('/').collect();
+
+        if parts.len() > 2 {
+            // Has subdirectory like tests/v0.2.1/test.peach
+            let subdir = parts[1];
+            format!("tests/{}/out/{}.c", subdir, stem)
+        } else {
+            // Direct tests/ file like tests/test.peach
+            format!("tests/out/{}.c", stem)
+        }
     } else {
         format!("build/{}.c", stem)
     }

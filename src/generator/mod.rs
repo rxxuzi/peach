@@ -2,6 +2,7 @@
 // Generates C code from AST
 
 pub mod c_codegen;
+pub mod builtin;
 
 use crate::parser::ast::Program;
 use c_codegen::CCodeGenerator;

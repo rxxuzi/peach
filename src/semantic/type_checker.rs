@@ -494,6 +494,7 @@ impl TypeChecker {
             Expression::IntLiteral(_) => Ok(Type::I32),
             Expression::FloatLiteral(_) => Ok(Type::F64),
             Expression::BoolLiteral(_) => Ok(Type::Bool),
+            Expression::StringLiteral(_) => Ok(Type::String),
 
             Expression::Variable(name) => {
                 self.symbol_table.get(name)
@@ -835,6 +836,31 @@ impl TypeChecker {
                 } else {
                     let msg = format!("Undefined struct '{}'", struct_literal.struct_name);
                     Err(self.error_with_span(msg, struct_literal.span.clone()))
+                }
+            }
+
+            Expression::MacroCall(macro_call) => {
+                // Validate macro name
+                match macro_call.macro_name.as_str() {
+                    "print" | "println" | "panic" => {
+                        // These macros accept any number of arguments
+                        // Type check all arguments
+                        for arg in &macro_call.arguments {
+                            self.infer_expression_type(arg)?;
+                        }
+                        Ok(Type::Void)
+                    }
+                    "format" => {
+                        // format! returns a string
+                        for arg in &macro_call.arguments {
+                            self.infer_expression_type(arg)?;
+                        }
+                        Ok(Type::String)
+                    }
+                    _ => {
+                        let msg = format!("Unknown builtin macro '{}'", macro_call.macro_name);
+                        Err(self.error_with_span(msg, macro_call.span.clone()))
+                    }
                 }
             }
         }
