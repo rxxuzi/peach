@@ -17,6 +17,9 @@ impl BuiltinMacroGenerator {
             "format" => Self::generate_format(macro_call, expression_to_c, infer_type),
             "len" => Self::generate_len(macro_call, expression_to_c, infer_type),
             "copy" => Self::generate_copy(macro_call, expression_to_c, infer_type),
+            "exit" => Self::generate_exit(macro_call, expression_to_c, infer_type),
+            "assert" => Self::generate_assert(macro_call, expression_to_c, infer_type),
+            "assert_eq" => Self::generate_assert_eq(macro_call, expression_to_c, infer_type),
             _ => format!("/* Unknown macro: {} */", macro_call.macro_name),
         }
     }
@@ -214,6 +217,69 @@ impl BuiltinMacroGenerator {
         } else {
             "/* copy! type inference failed */".to_string()
         }
+    }
+
+    fn generate_exit(
+        macro_call: &MacroCallExpression,
+        expression_to_c: &dyn Fn(&Expression) -> String,
+        _infer_type: &dyn Fn(&Expression) -> Option<Type>,
+    ) -> String {
+        // exit!(code) → exit(code)
+        if macro_call.arguments.is_empty() {
+            return "exit(0)".to_string();
+        }
+
+        let arg = &macro_call.arguments[0];
+        let arg_c = expression_to_c(arg);
+        format!("exit({})", arg_c)
+    }
+
+    fn generate_assert(
+        macro_call: &MacroCallExpression,
+        expression_to_c: &dyn Fn(&Expression) -> String,
+        _infer_type: &dyn Fn(&Expression) -> Option<Type>,
+    ) -> String {
+        // assert!(condition) → if (!(condition)) { fprintf(stderr, "assertion failed\n"); exit(1); }
+        if macro_call.arguments.is_empty() {
+            return "/* assert! requires a condition */".to_string();
+        }
+
+        let condition = &macro_call.arguments[0];
+        let condition_c = expression_to_c(condition);
+
+        format!(
+            "((void)(({}) || (fprintf(stderr, \"assertion failed\\n\"), exit(1), 0)))",
+            condition_c
+        )
+    }
+
+    fn generate_assert_eq(
+        macro_call: &MacroCallExpression,
+        expression_to_c: &dyn Fn(&Expression) -> String,
+        infer_type: &dyn Fn(&Expression) -> Option<Type>,
+    ) -> String {
+        // assert_eq!(a, b) → if (a != b) { fprintf(stderr, "assertion failed: a != b\n"); exit(1); }
+        if macro_call.arguments.len() != 2 {
+            return "/* assert_eq! requires exactly 2 arguments */".to_string();
+        }
+
+        let left = &macro_call.arguments[0];
+        let right = &macro_call.arguments[1];
+
+        let left_c = expression_to_c(left);
+        let right_c = expression_to_c(right);
+
+        // Infer type to generate appropriate format specifier
+        let format_spec = if let Some(ty) = infer_type(left) {
+            Self::type_to_format_specifier(&ty)
+        } else {
+            "%d"  // Default to integer
+        };
+
+        format!(
+            "((void)((({}) == ({})) || (fprintf(stderr, \"assertion failed: {} != {}, left = {}, right = {}\\n\", {}, {}), exit(1), 0)))",
+            left_c, right_c, format_spec, format_spec, format_spec, format_spec, left_c, right_c
+        )
     }
 
     /// Get the appropriate printf format specifier for a type

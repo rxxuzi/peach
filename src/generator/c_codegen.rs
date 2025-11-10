@@ -1,7 +1,7 @@
 // C code generator
 
 use crate::parser::ast::*;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 pub struct CCodeGenerator {
     output: String,
@@ -12,6 +12,7 @@ pub struct CCodeGenerator {
     impl_table: HashMap<String, Vec<Method>>,
     function_table: HashMap<String, Vec<Parameter>>,
     temp_var_counter: usize,  // Counter for temporary variables in method chains
+    required_headers: HashSet<String>,  // Track which headers are needed
 }
 
 impl CCodeGenerator {
@@ -24,6 +25,7 @@ impl CCodeGenerator {
             impl_table: HashMap::new(),
             function_table: HashMap::new(),
             temp_var_counter: 0,
+            required_headers: HashSet::new(),
         }
     }
 
@@ -40,12 +42,25 @@ impl CCodeGenerator {
             self.function_table.insert(function.name.clone(), function.parameters.clone());
         }
 
-        // Headers
-        self.emit_line("#include <stdio.h>");
-        self.emit_line("#include <stdlib.h>");
-        self.emit_line("#include <stdint.h>");
-        self.emit_line("#include <stdbool.h>");
-        self.emit_line("#include <string.h>");  // For memcpy (copy! macro)
+        // Scan program to determine required headers
+        self.scan_for_headers(program);
+
+        // Emit only required headers
+        if self.required_headers.contains("stdio.h") {
+            self.emit_line("#include <stdio.h>");
+        }
+        if self.required_headers.contains("stdlib.h") {
+            self.emit_line("#include <stdlib.h>");
+        }
+        if self.required_headers.contains("stdint.h") {
+            self.emit_line("#include <stdint.h>");
+        }
+        if self.required_headers.contains("stdbool.h") {
+            self.emit_line("#include <stdbool.h>");
+        }
+        if self.required_headers.contains("string.h") {
+            self.emit_line("#include <string.h>");
+        }
         self.emit_line("");
 
         // Generate slice struct definitions for array parameters
@@ -1120,5 +1135,216 @@ impl CCodeGenerator {
         }
 
         prev_var
+    }
+
+    /// Scan the program to determine which headers are required
+    fn scan_for_headers(&mut self, program: &Program) {
+        // Scan structs for types
+        for struct_def in &program.structs {
+            for field in &struct_def.fields {
+                self.mark_type_headers(&field.field_type);
+            }
+        }
+
+        // Scan functions
+        for function in &program.functions {
+            // Scan parameters
+            for param in &function.parameters {
+                self.mark_type_headers(&param.param_type);
+            }
+            // Scan return type
+            self.mark_type_headers(&function.return_type);
+            // Scan body
+            for statement in &function.body.statements {
+                self.scan_statement_for_headers(statement);
+            }
+        }
+
+        // Scan impl blocks
+        for impl_block in &program.impls {
+            for method in &impl_block.methods {
+                for param in &method.parameters {
+                    self.mark_type_headers(&param.param_type);
+                }
+                self.mark_type_headers(&method.return_type);
+                for statement in &method.body.statements {
+                    self.scan_statement_for_headers(statement);
+                }
+            }
+        }
+    }
+
+    /// Mark headers required by a specific type
+    fn mark_type_headers(&mut self, ty: &Type) {
+        match ty {
+            Type::I8 | Type::I16 | Type::I32 | Type::I64 |
+            Type::U8 | Type::U16 | Type::U32 | Type::U64 => {
+                self.required_headers.insert("stdint.h".to_string());
+            }
+            Type::Bool => {
+                self.required_headers.insert("stdbool.h".to_string());
+            }
+            Type::Array { element_type, .. } => {
+                self.mark_type_headers(element_type);
+            }
+            Type::Reference { inner, .. } => {
+                self.mark_type_headers(inner);
+            }
+            _ => {}
+        }
+    }
+
+    /// Scan a statement for headers
+    fn scan_statement_for_headers(&mut self, statement: &Statement) {
+        match statement {
+            Statement::VarDecl(decl) => {
+                if let Some(ref ty) = decl.var_type {
+                    self.mark_type_headers(ty);
+                }
+                if let Some(ref init) = decl.initializer {
+                    self.scan_expression_for_headers(init);
+                }
+            }
+            Statement::Assignment(assign) => {
+                // Scan the value expression
+                self.scan_expression_for_headers(&assign.value);
+                // Also scan target if it contains expressions (like array index)
+                match &assign.target {
+                    AssignmentTarget::Index(index_expr) => {
+                        self.scan_expression_for_headers(&index_expr.array);
+                        self.scan_expression_for_headers(&index_expr.index);
+                    }
+                    AssignmentTarget::FieldAccess(field_access) => {
+                        self.scan_expression_for_headers(&field_access.object);
+                    }
+                    AssignmentTarget::Variable(_) => {}
+                }
+            }
+            Statement::If(if_stmt) => {
+                self.scan_expression_for_headers(&if_stmt.condition);
+                for stmt in &if_stmt.then_block.statements {
+                    self.scan_statement_for_headers(stmt);
+                }
+                if let Some(ref else_block) = if_stmt.else_block {
+                    for stmt in &else_block.statements {
+                        self.scan_statement_for_headers(stmt);
+                    }
+                }
+            }
+            Statement::While(while_stmt) => {
+                self.scan_expression_for_headers(&while_stmt.condition);
+                for stmt in &while_stmt.body.statements {
+                    self.scan_statement_for_headers(stmt);
+                }
+            }
+            Statement::Loop(loop_stmt) => {
+                for stmt in &loop_stmt.body.statements {
+                    self.scan_statement_for_headers(stmt);
+                }
+            }
+            Statement::For(for_stmt) => {
+                // Scan the iterable expression
+                match &for_stmt.iterable {
+                    ForIterable::Range(start, end) => {
+                        self.scan_expression_for_headers(start);
+                        self.scan_expression_for_headers(end);
+                    }
+                    ForIterable::Expression(expr) => {
+                        self.scan_expression_for_headers(expr);
+                    }
+                }
+                for stmt in &for_stmt.body.statements {
+                    self.scan_statement_for_headers(stmt);
+                }
+            }
+            Statement::Return(ret) => {
+                if let Some(ref expr) = ret.value {
+                    self.scan_expression_for_headers(expr);
+                }
+            }
+            Statement::Expression(expr) => {
+                self.scan_expression_for_headers(expr);
+            }
+            Statement::Break(_) | Statement::Continue(_) => {}
+        }
+    }
+
+    /// Scan an expression for headers
+    fn scan_expression_for_headers(&mut self, expression: &Expression) {
+        match expression {
+            Expression::BoolLiteral(_) => {
+                self.required_headers.insert("stdbool.h".to_string());
+            }
+            Expression::MacroCall(macro_call) => {
+                match macro_call.macro_name.as_str() {
+                    "print" | "println" => {
+                        self.required_headers.insert("stdio.h".to_string());
+                    }
+                    "panic" => {
+                        self.required_headers.insert("stdio.h".to_string());
+                        self.required_headers.insert("stdlib.h".to_string());
+                    }
+                    "exit" => {
+                        self.required_headers.insert("stdlib.h".to_string());
+                    }
+                    "assert" | "assert_eq" => {
+                        self.required_headers.insert("stdio.h".to_string());
+                        self.required_headers.insert("stdlib.h".to_string());
+                    }
+                    "copy" => {
+                        self.required_headers.insert("string.h".to_string());
+                    }
+                    _ => {}
+                }
+                // Scan arguments
+                for arg in &macro_call.arguments {
+                    self.scan_expression_for_headers(arg);
+                }
+            }
+            Expression::Binary(binary) => {
+                self.scan_expression_for_headers(&binary.left);
+                self.scan_expression_for_headers(&binary.right);
+            }
+            Expression::Unary(unary) => {
+                self.scan_expression_for_headers(&unary.operand);
+            }
+            Expression::Call(call) => {
+                for arg in &call.arguments {
+                    self.scan_expression_for_headers(arg);
+                }
+            }
+            Expression::MethodCall(method_call) => {
+                self.scan_expression_for_headers(&method_call.object);
+                for arg in &method_call.arguments {
+                    self.scan_expression_for_headers(arg);
+                }
+            }
+            Expression::AssociatedCall(assoc_call) => {
+                for arg in &assoc_call.arguments {
+                    self.scan_expression_for_headers(arg);
+                }
+            }
+            Expression::FieldAccess(field_access) => {
+                self.scan_expression_for_headers(&field_access.object);
+            }
+            Expression::Index(index) => {
+                self.scan_expression_for_headers(&index.array);
+                self.scan_expression_for_headers(&index.index);
+            }
+            Expression::ArrayLiteral(array_lit) => {
+                for elem in &array_lit.elements {
+                    self.scan_expression_for_headers(elem);
+                }
+            }
+            Expression::StructLiteral(struct_lit) => {
+                for field in &struct_lit.fields {
+                    self.scan_expression_for_headers(&field.value);
+                }
+            }
+            Expression::Reference(reference) => {
+                self.scan_expression_for_headers(&reference.inner);
+            }
+            _ => {}
+        }
     }
 }

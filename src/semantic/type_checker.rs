@@ -1028,6 +1028,51 @@ impl TypeChecker {
                             }
                         }
                     }
+                    "exit" => {
+                        // exit!(code) - exits program with exit code
+                        // Accepts 0 or 1 argument (i32)
+                        if macro_call.arguments.len() > 1 {
+                            let msg = format!("exit! macro expects 0 or 1 argument, got {}", macro_call.arguments.len());
+                            return Err(self.error_with_span(msg, macro_call.span.clone()));
+                        }
+                        if macro_call.arguments.len() == 1 {
+                            let arg_type = self.infer_expression_type(&macro_call.arguments[0])?;
+                            if !matches!(arg_type, Type::I32) {
+                                let msg = format!("exit! macro expects i32 argument, got '{}'", arg_type.to_string());
+                                return Err(self.error_with_span(msg, macro_call.span.clone()));
+                            }
+                        }
+                        Ok(Type::Void)
+                    }
+                    "assert" => {
+                        // assert!(condition) - assertion with boolean condition
+                        if macro_call.arguments.len() != 1 {
+                            let msg = format!("assert! macro expects exactly 1 argument, got {}", macro_call.arguments.len());
+                            return Err(self.error_with_span(msg, macro_call.span.clone()));
+                        }
+                        let arg_type = self.infer_expression_type(&macro_call.arguments[0])?;
+                        if !matches!(arg_type, Type::Bool) {
+                            let msg = format!("assert! macro expects bool argument, got '{}'", arg_type.to_string());
+                            return Err(self.error_with_span(msg, macro_call.span.clone()));
+                        }
+                        Ok(Type::Void)
+                    }
+                    "assert_eq" => {
+                        // assert_eq!(a, b) - equality assertion
+                        if macro_call.arguments.len() != 2 {
+                            let msg = format!("assert_eq! macro expects exactly 2 arguments, got {}", macro_call.arguments.len());
+                            return Err(self.error_with_span(msg, macro_call.span.clone()));
+                        }
+                        let left_type = self.infer_expression_type(&macro_call.arguments[0])?;
+                        let right_type = self.infer_expression_type(&macro_call.arguments[1])?;
+
+                        if !self.types_match(&left_type, &right_type) {
+                            let msg = format!("assert_eq! macro: type mismatch between left ('{}') and right ('{}')",
+                                left_type.to_string(), right_type.to_string());
+                            return Err(self.error_with_span(msg, macro_call.span.clone()));
+                        }
+                        Ok(Type::Void)
+                    }
                     _ => {
                         let msg = format!("Unknown builtin macro '{}'", macro_call.macro_name);
                         Err(self.error_with_span(msg, macro_call.span.clone()))

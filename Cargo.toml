@@ -1,6 +1,6 @@
 [package]
 name = "peach"
-version = "0.2.6"
+version = "0.2.7"
 authors = ["rxxuzi"]
 edition = "2024"
 description = "Peach programming language"
