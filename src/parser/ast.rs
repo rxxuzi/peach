@@ -383,6 +383,7 @@ pub struct IndexExpression {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ReferenceExpression {
-    pub inner: Box<Expression>,  // &expr
+    pub inner: Box<Expression>,  // &expr or &mut expr
+    pub is_mutable: bool,  // false for &, true for &mut
     pub span: Option<Span>,
 }

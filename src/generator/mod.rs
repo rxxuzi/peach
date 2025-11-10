@@ -28,7 +28,7 @@ def main() -> i32 {
 "#;
 
         let tokens = lexer::tokenize(source).unwrap();
-        let program = parser::parse(tokens).unwrap();
+        let program = parser::parse(tokens, source.to_string(), "test.peach".to_string()).unwrap();
         let c_code = generate(&program).unwrap();
 
         assert!(c_code.contains("#include <stdint.h>"));

@@ -72,19 +72,51 @@ impl CCodeGenerator {
         Ok(self.output)
     }
 
-    /// Collect all unsized array types used in function parameters and generate slice structs
+    /// Collect all slice types and generate slice structs
     fn generate_slice_structs(&mut self, program: &Program) -> Result<(), String> {
         use std::collections::HashSet;
         let mut slice_types = HashSet::new();
 
+        // Helper function to extract slice element type
+        let extract_slice_type = |ty: &Type| -> Option<String> {
+            match ty {
+                Type::Reference { inner, .. } => {
+                    match &**inner {
+                        Type::Array { size: None, element_type } => {
+                            Some(element_type.to_c_type())
+                        }
+                        _ => None,
+                    }
+                }
+                _ => None,
+            }
+        };
+
         // Collect slice types from function parameters
         for function in &program.functions {
             for param in &function.parameters {
-                if let Type::Array { size: None, element_type } = &param.param_type {
-                    // Unsized array - need slice struct
-                    slice_types.insert(element_type.to_c_type());
+                if let Some(elem_type) = extract_slice_type(&param.param_type) {
+                    slice_types.insert(elem_type);
                 }
             }
+        }
+
+        // Collect slice types from method parameters
+        for impl_block in &program.impls {
+            for method in &impl_block.methods {
+                for param in &method.parameters {
+                    if let Some(elem_type) = extract_slice_type(&param.param_type) {
+                        slice_types.insert(elem_type);
+                    }
+                }
+                // Also check variable declarations in method bodies
+                self.collect_slice_types_from_block(&method.body, &extract_slice_type, &mut slice_types);
+            }
+        }
+
+        // Collect slice types from function bodies
+        for function in &program.functions {
+            self.collect_slice_types_from_block(&function.body, &extract_slice_type, &mut slice_types);
         }
 
         // Generate slice struct for each type
@@ -101,6 +133,40 @@ impl CCodeGenerator {
         }
 
         Ok(())
+    }
+
+    /// Helper function to collect slice types from a block's variable declarations
+    fn collect_slice_types_from_block<F>(&self, block: &Block, extract_slice_type: &F, slice_types: &mut std::collections::HashSet<String>)
+    where
+        F: Fn(&Type) -> Option<String>,
+    {
+        for stmt in &block.statements {
+            match stmt {
+                Statement::VarDecl(var_decl) => {
+                    if let Some(ref var_type) = var_decl.var_type {
+                        if let Some(elem_type) = extract_slice_type(var_type) {
+                            slice_types.insert(elem_type);
+                        }
+                    }
+                }
+                Statement::If(if_stmt) => {
+                    self.collect_slice_types_from_block(&if_stmt.then_block, extract_slice_type, slice_types);
+                    if let Some(ref else_block) = if_stmt.else_block {
+                        self.collect_slice_types_from_block(else_block, extract_slice_type, slice_types);
+                    }
+                }
+                Statement::While(while_stmt) => {
+                    self.collect_slice_types_from_block(&while_stmt.body, extract_slice_type, slice_types);
+                }
+                Statement::Loop(loop_stmt) => {
+                    self.collect_slice_types_from_block(&loop_stmt.body, extract_slice_type, slice_types);
+                }
+                Statement::For(for_stmt) => {
+                    self.collect_slice_types_from_block(&for_stmt.body, extract_slice_type, slice_types);
+                }
+                _ => {}
+            }
+        }
     }
 
     fn generate_struct(&mut self, struct_def: &Struct) -> Result<(), String> {
@@ -338,11 +404,35 @@ impl CCodeGenerator {
                         format!("{}{}{}", object, accessor, field_access.field)
                     }
                     AssignmentTarget::Index(index_expr) => {
-                        let array_code = self.expression_to_c(&index_expr.array);
                         let index_code = self.expression_to_c(&index_expr.index);
-                        // For now, generate simple array indexing: array[index]
-                        // Later when we implement slice structs, this will be: array.data[index]
-                        format!("{}[{}]", array_code, index_code)
+
+                        // Check if this is a slice (reference to array) or regular array
+                        let result = if let Expression::Variable(var_name) = &*index_expr.array {
+                            if let Some(ty) = self.variable_types.get(var_name) {
+                                match ty {
+                                    Type::Reference { inner, .. } => {
+                                        // Slice type: use array.data[index]
+                                        match &**inner {
+                                            Type::Array { .. } => {
+                                                Some(format!("{}.data[{}]", var_name, index_code))
+                                            }
+                                            _ => None
+                                        }
+                                    }
+                                    _ => None
+                                }
+                            } else {
+                                None
+                            }
+                        } else {
+                            None
+                        };
+
+                        // Use result if we have one, otherwise generate regular array access
+                        result.unwrap_or_else(|| {
+                            let array_code = self.expression_to_c(&index_expr.array);
+                            format!("{}[{}]", array_code, index_code)
+                        })
                     }
                 };
                 self.emit_line(&format!("{} = {};", target_code, value_code));
@@ -647,11 +737,21 @@ impl CCodeGenerator {
             Expression::Index(index_expr) => {
                 let index_code = self.expression_to_c(&index_expr.index);
 
-                // Check if this is a slice (unsized array parameter) or regular array
+                // Check if this is a slice (reference to array) or regular array
                 if let Expression::Variable(var_name) = &*index_expr.array {
-                    if let Some(Type::Array { size: None, .. }) = self.variable_types.get(var_name) {
-                        // Slice: use array.data[index]
-                        return format!("{}.data[{}]", var_name, index_code);
+                    if let Some(ty) = self.variable_types.get(var_name) {
+                        match ty {
+                            Type::Reference { inner, .. } => {
+                                // Slice type: use array.data[index]
+                                match &**inner {
+                                    Type::Array { .. } => {
+                                        return format!("{}.data[{}]", var_name, index_code);
+                                    }
+                                    _ => {}
+                                }
+                            }
+                            _ => {}
+                        }
                     }
                 }
 
@@ -800,8 +900,18 @@ impl CCodeGenerator {
             Expression::Index(index_expr) => {
                 // arr[i] returns element type
                 if let Expression::Variable(name) = &*index_expr.array {
-                    if let Some(Type::Array { element_type, .. }) = self.variable_types.get(name) {
-                        return Some((**element_type).clone());
+                    if let Some(var_type) = self.variable_types.get(name) {
+                        match var_type {
+                            Type::Array { element_type, .. } => {
+                                return Some((**element_type).clone());
+                            }
+                            Type::Reference { inner, .. } => {
+                                if let Type::Array { element_type, .. } = &**inner {
+                                    return Some((**element_type).clone());
+                                }
+                            }
+                            _ => {}
+                        }
                     }
                 }
                 None

@@ -161,9 +161,19 @@ impl BuiltinMacroGenerator {
                     format!("{}", n)
                 }
                 Type::Array { size: None, .. } => {
-                    // Slice: return .length field
+                    // Unsized array (shouldn't happen after v0.2.5, but kept for compatibility)
                     let arg_c = expression_to_c(arg);
                     format!("((int32_t)({}.length))", arg_c)
+                }
+                Type::Reference { ref inner, .. } => {
+                    // Slice type (&[]T or &mut []T): return .length field
+                    match &**inner {
+                        Type::Array { .. } => {
+                            let arg_c = expression_to_c(arg);
+                            format!("((int32_t)({}.length))", arg_c)
+                        }
+                        _ => "0".to_string(),
+                    }
                 }
                 _ => "0".to_string(),
             }
@@ -218,6 +228,7 @@ impl BuiltinMacroGenerator {
             Type::String => "%s",
             Type::Array { .. } => "%p",  // Arrays print as pointer for now
             Type::Struct(_) => "%p",     // Structs print as pointer
+            Type::Reference { .. } => "%p",  // Reference types (slices) print as pointer
             Type::Void => "",
         }
     }

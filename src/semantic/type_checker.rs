@@ -205,41 +205,60 @@ impl TypeChecker {
 
                 let var_type = if let Some(ref declared_type) = var_decl.var_type {
                     // Type is explicitly declared
-                    if let Some(ref init) = var_decl.initializer {
-                        // Check that initializer matches declared type
-                        match self.infer_expression_type(init) {
-                            Ok(init_type) => {
-                                if !self.types_match(&init_type, declared_type) {
-                                    // Check if this is the common mistake of missing & for slice creation
-                                    let helpful_hint = if let (
-                                        Type::Array { element_type: decl_elem, size: None },
-                                        Type::Array { element_type: init_elem, size: Some(_) }
-                                    ) = (declared_type, &init_type) {
-                                        if decl_elem == init_elem {
-                                            "\n  hint: to create a slice from an array literal, use &[...] instead of [...]"
-                                        } else {
-                                            ""
+                    // Check if this is size inference case: []T
+                    if let Type::Array { element_type: _decl_elem, size: None } = declared_type {
+                        // Size inference: infer size from initializer
+                        if let Some(ref init) = var_decl.initializer {
+                            match self.infer_expression_type(init) {
+                                Ok(init_type) => {
+                                    // Recursively infer sizes for multi-dimensional arrays
+                                    match self.infer_array_size(declared_type, &init_type) {
+                                        Ok(inferred_type) => inferred_type,
+                                        Err(err_msg) => {
+                                            self.errors.push(format!(
+                                                "Type mismatch in variable '{}': {}",
+                                                var_decl.name,
+                                                err_msg
+                                            ));
+                                            declared_type.clone()
                                         }
-                                    } else {
-                                        ""
-                                    };
-
-                                    self.errors.push(format!(
-                                        "Type mismatch: variable '{}' declared as '{}' but initialized with '{}'{}'",
-                                        var_decl.name,
-                                        declared_type.to_string(),
-                                        init_type.to_string(),
-                                        helpful_hint
-                                    ));
+                                    }
+                                }
+                                Err(e) => {
+                                    self.errors.push(e);
+                                    declared_type.clone()
                                 }
                             }
-                            Err(e) => {
-                                self.errors.push(e);
-                                // Continue with declared type even if initializer failed
+                        } else {
+                            self.errors.push(format!(
+                                "Variable '{}' with inferred size type '[]T' must have an initializer",
+                                var_decl.name
+                            ));
+                            declared_type.clone()
+                        }
+                    } else {
+                        // Regular type declaration (not size inference)
+                        if let Some(ref init) = var_decl.initializer {
+                            // Check that initializer matches declared type
+                            match self.infer_expression_type(init) {
+                                Ok(init_type) => {
+                                    if !self.types_match(&init_type, declared_type) {
+                                        self.errors.push(format!(
+                                            "Type mismatch: variable '{}' declared as '{}' but initialized with '{}''",
+                                            var_decl.name,
+                                            declared_type.to_string(),
+                                            init_type.to_string()
+                                        ));
+                                    }
+                                }
+                                Err(e) => {
+                                    self.errors.push(e);
+                                    // Continue with declared type even if initializer failed
+                                }
                             }
                         }
+                        declared_type.clone()
                     }
-                    declared_type.clone()
                 } else if let Some(ref init) = var_decl.initializer {
                     // Infer type from initializer
                     match self.infer_expression_type(init) {
@@ -370,12 +389,18 @@ impl TypeChecker {
                         // Get the element type from the array index expression
                         match self.infer_expression_type(&Expression::Index(index_expr.clone())) {
                             Ok(elem_type) => {
-                                // Check the array itself for mutability
+                                // Check the array/slice itself for mutability
                                 if let Expression::Variable(var_name) = &*index_expr.array {
-                                    if let Some((_, is_mutable)) = self.symbol_table.get(var_name) {
-                                        if !is_mutable {
+                                    if let Some((var_type, is_mutable)) = self.symbol_table.get(var_name) {
+                                        // For slices (&[]T or &mut []T), check is_mutable in the type
+                                        let can_mutate = match var_type {
+                                            Type::Reference { is_mutable: slice_mut, .. } => *slice_mut,
+                                            _ => *is_mutable,  // For arrays, use variable mutability
+                                        };
+
+                                        if !can_mutate {
                                             self.errors.push(format!(
-                                                "Cannot assign to element of immutable array '{}'",
+                                                "Cannot assign to element of immutable array/slice '{}'",
                                                 var_name
                                             ));
                                         }
@@ -695,6 +720,28 @@ impl TypeChecker {
                             ))
                         }
                     }
+                    Type::Reference { ref inner, .. } => {
+                        // Reference to array (slice) property access
+                        match &**inner {
+                            Type::Array { .. } => {
+                                if field_access.field == "length" {
+                                    Ok(Type::I32)  // length returns i32
+                                } else {
+                                    Err(format!(
+                                        "Slices only have 'length' property, not '{}'",
+                                        field_access.field
+                                    ))
+                                }
+                            }
+                            _ => {
+                                Err(format!(
+                                    "Cannot access field '{}' on type '{}'",
+                                    field_access.field,
+                                    object_type.to_string()
+                                ))
+                            }
+                        }
+                    }
                     Type::Struct(struct_name) => {
                         // Struct field access
                         // Look up the struct definition
@@ -932,7 +979,7 @@ impl TypeChecker {
                         Ok(Type::String)
                     }
                     "len" => {
-                        // len!(arr) returns i32 - length of array
+                        // len!(arr) returns i32 - length of array or slice
                         if macro_call.arguments.len() != 1 {
                             let msg = format!("len! macro expects exactly 1 argument, got {}", macro_call.arguments.len());
                             return Err(self.error_with_span(msg, macro_call.span.clone()));
@@ -940,8 +987,18 @@ impl TypeChecker {
                         let arg_type = self.infer_expression_type(&macro_call.arguments[0])?;
                         match arg_type {
                             Type::Array { .. } => Ok(Type::I32),
+                            Type::Reference { ref inner, .. } => {
+                                // Slice type (&[]T or &mut []T)
+                                match &**inner {
+                                    Type::Array { .. } => Ok(Type::I32),
+                                    _ => {
+                                        let msg = format!("len! macro expects array or slice argument, got '{}'", arg_type.to_string());
+                                        Err(self.error_with_span(msg, macro_call.span.clone()))
+                                    }
+                                }
+                            }
                             _ => {
-                                let msg = format!("len! macro expects array argument, got '{}'", arg_type.to_string());
+                                let msg = format!("len! macro expects array or slice argument, got '{}'", arg_type.to_string());
                                 Err(self.error_with_span(msg, macro_call.span.clone()))
                             }
                         }
@@ -1009,7 +1066,7 @@ impl TypeChecker {
                 // Get the type of the array expression
                 let array_type = self.infer_expression_type(&index_expr.array)?;
 
-                // Ensure it's actually an array
+                // Ensure it's actually an array or slice
                 match array_type {
                     Type::Array { element_type, .. } => {
                         // Check that index is an integer type
@@ -1028,6 +1085,34 @@ impl TypeChecker {
                             }
                         }
                     }
+                    Type::Reference { ref inner, .. } => {
+                        // Reference to array (slice) can also be indexed
+                        match &**inner {
+                            Type::Array { element_type, .. } => {
+                                // Check that index is an integer type
+                                let index_type = self.infer_expression_type(&index_expr.index)?;
+                                match index_type {
+                                    Type::I8 | Type::I16 | Type::I32 | Type::I64 |
+                                    Type::U8 | Type::U16 | Type::U32 | Type::U64 => {
+                                        // Index is valid, return element type
+                                        Ok(element_type.as_ref().clone())
+                                    }
+                                    _ => {
+                                        Err(format!(
+                                            "Slice index must be an integer type, got '{}'",
+                                            index_type.to_string()
+                                        ))
+                                    }
+                                }
+                            }
+                            _ => {
+                                Err(format!(
+                                    "Cannot index into non-array reference type '{}'",
+                                    array_type.to_string()
+                                ))
+                            }
+                        }
+                    }
                     _ => {
                         Err(format!(
                             "Cannot index into non-array type '{}'",
@@ -1037,15 +1122,34 @@ impl TypeChecker {
                 }
             }
             Expression::Reference(ref_expr) => {
-                // &expr creates a slice from an array
+                // &expr or &mut expr creates a slice from an array
                 let inner_type = self.infer_expression_type(&ref_expr.inner)?;
+
+                // If &mut, check that the inner expression is mutable
+                if ref_expr.is_mutable {
+                    // Check if inner is a variable and if it's mutable
+                    if let Expression::Variable(var_name) = &*ref_expr.inner {
+                        if let Some((_ty, is_mut)) = self.symbol_table.get(var_name.as_str()) {
+                            if !is_mut {
+                                return Err(format!(
+                                    "Cannot create mutable slice from immutable variable '{}'. Use 'var' instead of 'val'",
+                                    var_name
+                                ));
+                            }
+                        }
+                    }
+                }
 
                 match inner_type {
                     Type::Array { element_type, .. } => {
-                        // &[N]T → []T (slice)
-                        Ok(Type::Array {
-                            element_type,
-                            size: None,  // Slice has no compile-time size
+                        // &[N]T → &[]T (immutable slice)
+                        // &mut [N]T → &mut []T (mutable slice)
+                        Ok(Type::Reference {
+                            inner: Box::new(Type::Array {
+                                element_type,
+                                size: None,  // Slice has no compile-time size
+                            }),
+                            is_mutable: ref_expr.is_mutable,
                         })
                     }
                     _ => {
@@ -1080,6 +1184,35 @@ impl TypeChecker {
             BinaryOperator::GreaterEqual => ">=",
             BinaryOperator::And => "&&",
             BinaryOperator::Or => "||",
+        }
+    }
+
+    /// Recursively infer array size from initializer type
+    /// Declared type has None sizes ([]T or [][]T), initializer has Some sizes ([3]T or [2][3]T)
+    fn infer_array_size(&self, declared: &Type, initializer: &Type) -> Result<Type, String> {
+        match (declared, initializer) {
+            (
+                Type::Array { element_type: decl_elem, size: None },
+                Type::Array { element_type: init_elem, size: Some(n) }
+            ) => {
+                // Check element types match (recursively for multi-dimensional)
+                let inferred_elem = self.infer_array_size(&**decl_elem, &**init_elem)?;
+                Ok(Type::Array {
+                    element_type: Box::new(inferred_elem),
+                    size: Some(*n),
+                })
+            }
+            (decl_ty, init_ty) if self.types_match(decl_ty, init_ty) => {
+                // Base case: types match exactly
+                Ok(decl_ty.clone())
+            }
+            _ => {
+                Err(format!(
+                    "declared as '{}' but initialized with '{}'",
+                    declared.to_string(),
+                    initializer.to_string()
+                ))
+            }
         }
     }
 

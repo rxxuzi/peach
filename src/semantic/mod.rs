@@ -54,7 +54,7 @@ def main() -> i32 {
 "#;
 
         let tokens = lexer::tokenize(source).unwrap();
-        let mut program = parser::parse(tokens).unwrap();
+        let mut program = parser::parse(tokens, source.to_string(), "test.peach".to_string()).unwrap();
         let result = analyze(&mut program, source, "test.peach");
 
         assert!(result.is_ok());
@@ -70,7 +70,7 @@ def main() -> i32 {
 "#;
 
         let tokens = lexer::tokenize(source).unwrap();
-        let mut program = parser::parse(tokens).unwrap();
+        let mut program = parser::parse(tokens, source.to_string(), "test.peach".to_string()).unwrap();
         let result = analyze(&mut program, source, "test.peach");
 
         assert!(result.is_err());
@@ -89,7 +89,7 @@ def main() -> i32 {
 "#;
 
         let tokens = lexer::tokenize(source).unwrap();
-        let mut program = parser::parse(tokens).unwrap();
+        let mut program = parser::parse(tokens, source.to_string(), "test.peach".to_string()).unwrap();
         let result = analyze(&mut program, source, "test.peach");
 
         assert!(result.is_err());

@@ -813,12 +813,16 @@ impl Parser {
             }));
         }
 
-        // Reference operator (&) for creating slices
+        // Reference operator (&) or mutable reference (&mut) for creating slices
         if self.match_token(&TokenType::Amp) {
+            // Check for mut keyword
+            let is_mutable = self.match_token(&TokenType::Mut);
+
             // Use postfix() to support &matrix[0] syntax (indexing after reference)
             let inner = self.postfix()?;
             return Ok(Expression::Reference(ReferenceExpression {
                 inner: Box::new(inner),
+                is_mutable,
                 span: self.current_span(),
             }));
         }
@@ -1006,6 +1010,17 @@ impl Parser {
     }
 
     fn parse_type(&mut self) -> Result<Type, String> {
+        // Check for reference type: &T or &mut T
+        if self.match_token(&TokenType::Amp) {
+            // Check for mut keyword
+            let is_mutable = self.match_token(&TokenType::Mut);
+
+            // Parse inner type (recursively)
+            let inner = Box::new(self.parse_type()?);
+
+            return Ok(Type::Reference { inner, is_mutable });
+        }
+
         // Check for array type: [N]T or []T
         if self.match_token(&TokenType::LeftBracket) {
             // Parse optional size
