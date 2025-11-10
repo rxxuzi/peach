@@ -11,6 +11,7 @@ pub struct CCodeGenerator {
     struct_table: HashMap<String, Vec<StructField>>,
     impl_table: HashMap<String, Vec<Method>>,
     function_table: HashMap<String, Vec<Parameter>>,
+    temp_var_counter: usize,  // Counter for temporary variables in method chains
 }
 
 impl CCodeGenerator {
@@ -22,6 +23,7 @@ impl CCodeGenerator {
             struct_table: HashMap::new(),
             impl_table: HashMap::new(),
             function_table: HashMap::new(),
+            temp_var_counter: 0,
         }
     }
 
@@ -354,7 +356,7 @@ impl CCodeGenerator {
 
                             if let Some(ref init) = var_decl.initializer {
                                 line.push_str(" = ");
-                                line.push_str(&self.expression_to_c(init));
+                                line.push_str(&self.generate_method_chain_temps(init));
                             }
 
                             line.push(';');
@@ -366,7 +368,7 @@ impl CCodeGenerator {
 
                             if let Some(ref init) = var_decl.initializer {
                                 line.push_str(" = ");
-                                line.push_str(&self.expression_to_c(init));
+                                line.push_str(&self.generate_method_chain_temps(init));
                             }
 
                             line.push(';');
@@ -381,7 +383,7 @@ impl CCodeGenerator {
 
                         if let Some(ref init) = var_decl.initializer {
                             line.push_str(" = ");
-                            line.push_str(&self.expression_to_c(init));
+                            line.push_str(&self.generate_method_chain_temps(init));
                         }
 
                         line.push(';');
@@ -679,8 +681,8 @@ impl CCodeGenerator {
                 // Infer the type of the object
                 let struct_name = self.infer_expression_type_name(&method_call.object);
 
-                // Generate method arguments
-                let mut args = vec![format!("&{}", object_expr)];  // Pass object as pointer
+                // Generate method arguments (object as first argument)
+                let mut args = vec![format!("&{}", object_expr)];
                 for arg in &method_call.arguments {
                     args.push(self.expression_to_c(arg));
                 }
@@ -892,10 +894,19 @@ impl CCodeGenerator {
             Expression::FieldAccess(field_access) => {
                 // Special case for array.length
                 if field_access.field == "length" {
-                    Some(Type::I32)
-                } else {
-                    None
+                    return Some(Type::I32);
                 }
+
+                // Infer struct field type
+                if let Some(struct_name) = self.infer_expression_type_name(&field_access.object) {
+                    if let Some(fields) = self.struct_table.get(&struct_name) {
+                        if let Some(field) = fields.iter().find(|f| f.name == field_access.field) {
+                            return Some(field.field_type.clone());
+                        }
+                    }
+                }
+
+                None
             }
             Expression::Index(index_expr) => {
                 // arr[i] returns element type
@@ -956,16 +967,158 @@ impl CCodeGenerator {
                     None
                 }
             }
-            Expression::MethodCall(_method_call) => {
-                // Method calls return values - would need full type inference
-                // For now, not supported in method chains
-                None
+            Expression::MethodCall(method_call) => {
+                // Get the object's struct name
+                if let Some(struct_name) = self.infer_expression_type_name(&method_call.object) {
+                    // Look up the method in the impl table
+                    if let Some(methods) = self.impl_table.get(&struct_name) {
+                        // Find the method by name
+                        if let Some(method) = methods.iter().find(|m| m.name == method_call.method) {
+                            // Check if the return type is a struct
+                            match &method.return_type {
+                                Type::Struct(return_struct_name) => Some(return_struct_name.clone()),
+                                _ => None,
+                            }
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
             }
-            Expression::Call(_) | Expression::AssociatedCall(_) => {
-                // Would need to look up function return types
+            Expression::AssociatedCall(assoc_call) => {
+                // Look up the associated function in the impl table
+                if let Some(methods) = self.impl_table.get(&assoc_call.type_name) {
+                    // Find the function by name
+                    if let Some(method) = methods.iter().find(|m| m.name == assoc_call.function) {
+                        // Check if the return type is a struct
+                        match &method.return_type {
+                            Type::Struct(return_struct_name) => Some(return_struct_name.clone()),
+                            _ => None,
+                        }
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            }
+            Expression::Call(_) => {
+                // Regular function calls - would need function_table access
                 None
             }
             _ => None,
         }
+    }
+
+    /// Check if an expression is a method chain (method called on another method/function result)
+    fn is_method_chain(&self, expr: &Expression) -> bool {
+        match expr {
+            Expression::MethodCall(method_call) => {
+                // Check if the object is a method or associated call (not a simple variable)
+                matches!(&*method_call.object,
+                    Expression::MethodCall(_) | Expression::AssociatedCall(_))
+            }
+            _ => false,
+        }
+    }
+
+    /// Generate temporary variables for method chain and return the final variable name
+    /// This transforms: p.move_by(...).scale(...)
+    /// Into: __tmp_0 = p.move_by(...); __tmp_1 = __tmp_0.scale(...); return "__tmp_1"
+    fn generate_method_chain_temps(&mut self, expr: &Expression) -> String {
+        if !self.is_method_chain(expr) {
+            // Not a chain, generate normally
+            return self.expression_to_c(expr);
+        }
+
+        // Collect all steps in the chain from innermost to outermost
+        let mut steps = Vec::new();
+        let mut current = expr;
+
+        while let Expression::MethodCall(method_call) = current {
+            steps.push(current);
+            current = &method_call.object;
+        }
+
+        // Reverse to process from innermost (base) to outermost
+        steps.reverse();
+
+        // Generate the base expression (non-chained part)
+        // If the base is an AssociatedCall, we need a temp for it too
+        let mut prev_var = match current {
+            Expression::AssociatedCall(assoc_call) => {
+                // Generate temp variable for the associated call result
+                let temp_name = format!("__tmp_{}", self.temp_var_counter);
+                self.temp_var_counter += 1;
+
+                // Get the return type
+                let type_str = if let Some(methods) = self.impl_table.get(&assoc_call.type_name) {
+                    if let Some(method) = methods.iter().find(|m| m.name == assoc_call.function) {
+                        match &method.return_type {
+                            Type::Struct(name) => name.clone(),
+                            _ => "Unknown".to_string(),
+                        }
+                    } else {
+                        "Unknown".to_string()
+                    }
+                } else {
+                    "Unknown".to_string()
+                };
+
+                // Generate the call
+                let call_str = self.expression_to_c(current);
+                self.emit_line(&format!("{} {} = {};", type_str, temp_name, call_str));
+                temp_name
+            }
+            _ => self.expression_to_c(current),
+        };
+
+        // Generate temps for each chained method call
+        for step in steps.iter() {
+            if let Expression::MethodCall(method_call) = step {
+                let temp_name = format!("__tmp_{}", self.temp_var_counter);
+                self.temp_var_counter += 1;
+
+                // Get the struct name for the method (object's type)
+                let object_struct_name = self.infer_expression_type_name(&method_call.object)
+                    .unwrap_or_else(|| "Unknown".to_string());
+
+                // Get the return type for the temp variable declaration
+                let return_type = if let Some(methods) = self.impl_table.get(&object_struct_name) {
+                    if let Some(method) = methods.iter().find(|m| m.name == method_call.method) {
+                        method.return_type.clone()
+                    } else {
+                        Type::Void
+                    }
+                } else {
+                    Type::Void
+                };
+
+                let type_c_str = return_type.to_c_type();
+
+                // Generate method call with previous result
+                let mut args = vec![format!("&{}", prev_var)];
+                for arg in &method_call.arguments {
+                    args.push(self.expression_to_c(arg));
+                }
+
+                let method_call_str = format!("{}_{}({})",
+                    object_struct_name,
+                    method_call.method,
+                    args.join(", ")
+                );
+
+                // Emit temp variable declaration
+                self.emit_line(&format!("{} {} = {};", type_c_str, temp_name, method_call_str));
+
+                prev_var = temp_name;
+            }
+        }
+
+        prev_var
     }
 }
